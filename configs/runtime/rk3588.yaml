@@ -1,0 +1,8 @@
+backend: rkllm
+target: rk3588
+model_path: ../../artifacts/converted_models/deepseek-r1-distill-qwen-1.5b-w8a8-rk3588.rkllm
+max_new_tokens: 128
+temperature: 0.8
+top_p: 0.9
+top_k: 1
+repeat_penalty: 1.1

@@ -1,0 +1,2 @@
+# Vendor-supplied RK3588 board dependency; obtain it from the official RKLLM release.
+# rkllm-runtime==1.3.0

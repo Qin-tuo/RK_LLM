@@ -1,0 +1,7 @@
+backend: mock
+target: host
+max_new_tokens: 32
+temperature: 0.8
+top_p: 0.9
+top_k: 1
+repeat_penalty: 1.1

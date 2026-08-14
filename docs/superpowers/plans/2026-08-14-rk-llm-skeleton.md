@@ -1061,7 +1061,7 @@ install:
 test:
 	python3 -m pytest -m "not hardware"
 smoke:
-	rk-llm generate --config configs/runtime/mock.yaml --prompt "hello"
+	rk-llm generate --backend mock --config configs/runtime/mock.yaml --prompt "hello"
 ```
 
 - [ ] **Step 6: Verify layout and native skeleton behavior**
@@ -1090,7 +1090,7 @@ Expected: all unit and integration tests pass with zero warnings.
 
 - [ ] **Step 2: Verify the installed CLI paths**
 
-Run: `rk-llm doctor --backend mock && rk-llm generate --config configs/runtime/mock.yaml --prompt "hello" && rk-llm benchmark --config configs/benchmark/smoke.yaml --output artifacts/benchmark_runs/mock.jsonl`
+Run: `rk-llm doctor --backend mock && rk-llm generate --backend mock --config configs/runtime/mock.yaml --prompt "hello" && rk-llm benchmark --backend mock --config configs/benchmark/smoke.yaml --output artifacts/benchmark_runs/mock.jsonl`
 
 Expected: doctor reports `is_mock: true`, generation includes `mock: hello`, and benchmark writes JSON Lines records without RK hardware claims.
 

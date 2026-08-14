@@ -1,0 +1,8 @@
+iterations: 1
+prompts:
+  - Introduce yourself in one sentence.
+  - Compute 17 plus 25.
+runtime:
+  backend: mock
+  target: host
+  max_new_tokens: 32
