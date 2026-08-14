@@ -29,3 +29,76 @@ def test_benchmark_config_requires_prompts(tmp_path: Path) -> None:
     path.write_text("iterations: 1\nprompts: []\n", encoding="utf-8")
     with pytest.raises(ValueError, match="prompts"):
         load_benchmark_config(path)
+
+
+@pytest.mark.parametrize(
+    "yaml_prompts",
+    ["hello", "{one: two}", "[hello, null]", "[hello, true]", "[hello, 7]"],
+)
+def test_benchmark_prompts_must_be_a_list_of_strings(
+    tmp_path: Path, yaml_prompts: str
+) -> None:
+    path = tmp_path / "benchmark.yaml"
+    path.write_text(f"iterations: 1\nprompts: {yaml_prompts}\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="prompts"):
+        load_benchmark_config(path)
+
+
+@pytest.mark.parametrize("yaml_iterations", ["1.9", "true"])
+def test_benchmark_iterations_must_be_an_integer(
+    tmp_path: Path, yaml_iterations: str
+) -> None:
+    path = tmp_path / "benchmark.yaml"
+    path.write_text(
+        f"iterations: {yaml_iterations}\nprompts: [hello]\n", encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match="iterations"):
+        load_benchmark_config(path)
+
+
+@pytest.mark.parametrize(
+    ("runtime_yaml", "field"),
+    [
+        ("backend: true\ntarget: host\n", "backend"),
+        ("backend: mock\ntarget: []\n", "target"),
+        ("backend: rkllm\ntarget: rk3588\nmodel_path: 12\n", "model_path"),
+        ("backend: mock\ntarget: host\nmodel_path: '   '\n", "model_path"),
+        ("backend: mock\ntarget: host\nmax_new_tokens: true\n", "max_new_tokens"),
+        ("backend: mock\ntarget: host\ntop_k: 1.9\n", "top_k"),
+        ("backend: mock\ntarget: host\ntemperature: true\n", "temperature"),
+        ("backend: mock\ntarget: host\ntop_p: true\n", "top_p"),
+        ("backend: mock\ntarget: host\nrepeat_penalty: true\n", "repeat_penalty"),
+    ],
+)
+def test_runtime_config_rejects_malformed_field_types(
+    tmp_path: Path, runtime_yaml: str, field: str
+) -> None:
+    path = tmp_path / "runtime.yaml"
+    path.write_text(runtime_yaml, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=field):
+        load_runtime_config(path)
+
+
+def test_runtime_config_accepts_integer_and_float_sampling_values(tmp_path: Path) -> None:
+    path = tmp_path / "runtime.yaml"
+    path.write_text(
+        "backend: mock\n"
+        "target: host\n"
+        "model_path: null\n"
+        "max_new_tokens: 64\n"
+        "temperature: 1\n"
+        "top_p: 0.75\n"
+        "top_k: 4\n"
+        "repeat_penalty: 2\n",
+        encoding="utf-8",
+    )
+
+    config = load_runtime_config(path)
+
+    assert config.model_path is None
+    assert config.temperature == 1.0
+    assert config.top_p == 0.75
+    assert config.repeat_penalty == 2.0
