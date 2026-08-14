@@ -11,9 +11,8 @@ class MockBackend:
         return None
 
     def generate(self, request: GenerationRequest) -> Iterator[TextChunk]:
-        yield TextChunk("mock:")
-        yield TextChunk(" ")
-        yield TextChunk(request.prompt.strip())
+        chunks = (TextChunk("mock:"), TextChunk(" "), TextChunk(request.prompt.strip()))
+        yield from chunks[: request.max_new_tokens]
 
     def shutdown(self) -> None:
         return None
