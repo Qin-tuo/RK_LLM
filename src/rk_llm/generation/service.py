@@ -2,6 +2,7 @@ import time
 from collections.abc import Callable
 
 from rk_llm.backends.base import GenerationBackend
+from rk_llm.errors import BackendUnavailableError
 from rk_llm.types import GenerationRequest, GenerationResult, TextChunk
 
 
@@ -22,7 +23,7 @@ class GenerationService:
         """Load for one request and always release after a successful load."""
         capabilities = self._backend.capabilities()
         if not capabilities.available:
-            raise RuntimeError(capabilities.reason or "backend unavailable")
+            raise BackendUnavailableError(capabilities.reason or "backend unavailable")
         self._backend.load()
         try:
             started = self._clock()

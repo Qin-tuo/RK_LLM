@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from rk_llm.errors import (
     NativeRunnerError,
     RKLLMProjectError,
 )
+from rk_llm.platform.probe import probe_rkllm
 from rk_llm.types import GenerationRequest
 
 
@@ -53,7 +55,43 @@ def test_rkllm_backend_reports_non_executable_runner(
     assert capabilities.reason == f"native runner is not executable: {runner_path}"
 
 
-def test_rkllm_backend_reports_available_prerequisites(
+def test_rkllm_probe_reports_unreadable_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("rk_llm.platform.probe.platform.machine", lambda: "aarch64")
+    runner_path = tmp_path / "runner"
+    runner_path.write_text("runner", encoding="utf-8")
+    model_path = tmp_path / "model.rkllm"
+    model_path.write_bytes(b"model")
+
+    def access(path: Path, mode: int) -> bool:
+        return not (path == model_path and mode == os.R_OK)
+
+    monkeypatch.setattr("rk_llm.platform.probe.os.access", access)
+
+    capabilities = probe_rkllm(runner_path, model_path)
+
+    assert capabilities.available is False
+    assert capabilities.reason == f"RKLLM model is not readable: {model_path}"
+
+
+def test_rkllm_probe_reports_satisfied_prerequisites(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("rk_llm.platform.probe.platform.machine", lambda: "arm64")
+    runner_path = tmp_path / "runner"
+    runner_path.write_text("runner", encoding="utf-8")
+    runner_path.chmod(0o755)
+    model_path = tmp_path / "model.rkllm"
+    model_path.write_bytes(b"model")
+
+    capabilities = probe_rkllm(runner_path, model_path)
+
+    assert capabilities.available is True
+    assert capabilities.reason is None
+
+
+def test_rkllm_backend_remains_unavailable_without_native_protocol(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr("rk_llm.platform.probe.platform.machine", lambda: "arm64")
@@ -65,8 +103,8 @@ def test_rkllm_backend_reports_available_prerequisites(
 
     capabilities = RKLLMBackend(runner_path, model_path).capabilities()
 
-    assert capabilities.available is True
-    assert capabilities.reason is None
+    assert capabilities.available is False
+    assert "native protocol is not implemented" in (capabilities.reason or "")
 
 
 def test_rkllm_backend_never_falls_back_when_unavailable(tmp_path: Path) -> None:
@@ -87,10 +125,12 @@ def test_rkllm_backend_rejects_unimplemented_native_protocol(
     model_path.write_bytes(b"model")
     backend = RKLLMBackend(runner_path, model_path)
 
-    with pytest.raises(NativeRunnerError, match="not part of the skeleton milestone"):
+    with pytest.raises(NativeRunnerError, match="native protocol is not implemented"):
         backend.load()
 
-    with pytest.raises(NativeRunnerError, match="not part of the skeleton milestone"):
-        backend.generate(GenerationRequest(prompt="hello"))
+    stream = backend.generate(GenerationRequest(prompt="hello"))
+    assert iter(stream) is stream
+    with pytest.raises(NativeRunnerError, match="native protocol is not implemented"):
+        next(stream)
 
     assert backend.shutdown() is None

@@ -13,6 +13,8 @@ def probe_rkllm(runner_path: Path, model_path: Path) -> BackendCapabilities:
         reasons.append(f"native runner is not executable: {runner_path}")
     if not model_path.is_file():
         reasons.append(f"RKLLM model is missing: {model_path}")
+    elif not os.access(model_path, os.R_OK):
+        reasons.append(f"RKLLM model is not readable: {model_path}")
     machine = platform.machine()
     if machine not in {"aarch64", "arm64"}:
         reasons.append(f"host architecture is {machine}, expected aarch64")

@@ -3,6 +3,7 @@ from collections.abc import Iterator
 import pytest
 
 from rk_llm.backends.mock import MockBackend
+from rk_llm.errors import BackendUnavailableError
 from rk_llm.generation.service import GenerationService
 from rk_llm.types import BackendCapabilities, GenerationRequest, TextChunk
 
@@ -136,11 +137,12 @@ def test_generation_service_shuts_down_after_callback_failure() -> None:
     assert backend.shutdown_calls == 1
 
 
-def test_unavailable_backend_does_not_enter_load_lifecycle() -> None:
+def test_unavailable_backend_raises_domain_error_without_entering_load_lifecycle() -> None:
     backend = RecordingBackend(available=False)
 
-    with pytest.raises(RuntimeError, match="recording backend unavailable"):
+    with pytest.raises(BackendUnavailableError) as error:
         GenerationService(backend).generate(GenerationRequest(prompt="hello"))
 
+    assert str(error.value) == "recording backend unavailable"
     assert backend.load_calls == 0
     assert backend.shutdown_calls == 0
