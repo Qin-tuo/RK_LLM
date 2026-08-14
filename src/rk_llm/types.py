@@ -1,6 +1,7 @@
 """Domain types for text generation and backend reporting."""
 
 from dataclasses import dataclass
+from math import isfinite
 
 
 @dataclass(frozen=True)
@@ -17,13 +18,13 @@ class GenerationRequest:
             raise ValueError("prompt must not be empty")
         if self.max_new_tokens < 1:
             raise ValueError("max_new_tokens must be at least 1")
-        if self.temperature < 0:
+        if not isfinite(self.temperature) or self.temperature < 0:
             raise ValueError("temperature must be non-negative")
-        if not 0 < self.top_p <= 1:
+        if not isfinite(self.top_p) or not 0 < self.top_p <= 1:
             raise ValueError("top_p must be greater than 0 and at most 1")
         if self.top_k < 1:
             raise ValueError("top_k must be at least 1")
-        if self.repeat_penalty <= 0:
+        if not isfinite(self.repeat_penalty) or self.repeat_penalty <= 0:
             raise ValueError("repeat_penalty must be greater than 0")
 
 

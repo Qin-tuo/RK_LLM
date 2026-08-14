@@ -1,3 +1,5 @@
+from math import inf, nan
+
 import pytest
 
 from rk_llm.types import BackendCapabilities, GenerationRequest, TextChunk
@@ -16,6 +18,13 @@ def test_generation_request_requires_positive_max_new_tokens():
 def test_generation_request_rejects_negative_temperature():
     with pytest.raises(ValueError, match="temperature"):
         GenerationRequest(prompt="hello", temperature=-0.1)
+
+
+@pytest.mark.parametrize("field", ["temperature", "top_p", "repeat_penalty"])
+@pytest.mark.parametrize("value", [nan, inf, -inf])
+def test_generation_request_rejects_non_finite_sampling_values(field, value):
+    with pytest.raises(ValueError, match=field):
+        GenerationRequest(prompt="hello", **{field: value})
 
 
 def test_text_chunk_preserves_token_count():

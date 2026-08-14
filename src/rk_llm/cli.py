@@ -21,6 +21,10 @@ _DEFAULT_RUNNER_PATH = Path("native/rkllm_runner/build/rkllm_runner")
 _DEFAULT_MODEL_PATH = Path("artifacts/converted_models/model.rkllm")
 
 
+def _target_for_backend(backend: str) -> str:
+    return "host" if backend == "mock" else "rk3588"
+
+
 def _deployment_root() -> Path:
     configured_root = os.environ.get("RK_LLM_ROOT")
     if configured_root is None:
@@ -87,7 +91,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if capabilities.available else 2
 
     if args.command == "generate":
-        config = replace(load_runtime_config(args.config), backend=args.backend)
+        config = replace(
+            load_runtime_config(args.config),
+            backend=args.backend,
+            target=_target_for_backend(args.backend),
+        )
         request = GenerationRequest(
             prompt=args.prompt,
             max_new_tokens=config.max_new_tokens,
@@ -103,7 +111,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     config = load_benchmark_config(args.config)
-    config = replace(config, runtime=replace(config.runtime, backend=args.backend))
+    config = replace(
+        config,
+        runtime=replace(
+            config.runtime,
+            backend=args.backend,
+            target=_target_for_backend(args.backend),
+        ),
+    )
     records = run_benchmark(config, _backend(config.runtime), args.output)
     print(json.dumps({"records": len(records), "output": str(args.output)}))
     return 0

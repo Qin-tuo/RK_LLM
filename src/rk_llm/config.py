@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,15 @@ class RuntimeConfig:
     top_p: float
     top_k: int
     repeat_penalty: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.backend, str) or self.backend not in ("mock", "rkllm"):
+            raise ValueError("backend must be mock or rkllm")
+        if not isinstance(self.target, str) or self.target not in ("host", "rk3588"):
+            raise ValueError("target must be host or rk3588")
+        expected_target = "host" if self.backend == "mock" else "rk3588"
+        if self.target != expected_target:
+            raise ValueError(f"target must be {expected_target} for backend {self.backend}")
 
 
 @dataclass(frozen=True)
@@ -54,7 +64,10 @@ def _number_value(data: dict[str, Any], field: str, default: float) -> float:
     value = data.get(field, default)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{field} must be a number")
-    return float(value)
+    number = float(value)
+    if not isfinite(number):
+        raise ValueError(f"{field} must be finite")
+    return number
 
 
 def _runtime_from_mapping(data: dict[str, Any], base_dir: Path) -> RuntimeConfig:

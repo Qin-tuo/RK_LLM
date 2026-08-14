@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from rk_llm.config import load_benchmark_config, load_runtime_config
+from rk_llm.config import RuntimeConfig, load_benchmark_config, load_runtime_config
 from rk_llm.errors import ConfigurationError
 
 
@@ -113,3 +113,73 @@ def test_runtime_config_accepts_integer_and_float_sampling_values(tmp_path: Path
     assert config.temperature == 1.0
     assert config.top_p == 0.75
     assert config.repeat_penalty == 2.0
+
+
+@pytest.mark.parametrize(
+    ("backend", "target"),
+    [
+        ("mock", ""),
+        ("mock", "s100"),
+        ("mock", "arbitrary"),
+        ("mock", "rk3588"),
+        ("rkllm", "host"),
+    ],
+)
+def test_runtime_config_enforces_rk_backend_target_pairs(
+    tmp_path: Path, backend: str, target: str
+) -> None:
+    path = tmp_path / "runtime.yaml"
+    path.write_text(
+        f"backend: {backend}\ntarget: '{target}'\nmodel_path: model.rkllm\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="target"):
+        load_runtime_config(path)
+
+
+@pytest.mark.parametrize(
+    ("backend", "target"),
+    [
+        ("mock", ""),
+        ("mock", "s100"),
+        ("mock", "arbitrary"),
+        ("mock", "rk3588"),
+        ("rkllm", "host"),
+    ],
+)
+def test_runtime_config_type_enforces_backend_target_pairs(
+    backend: str, target: str
+) -> None:
+    with pytest.raises(ValueError, match="target"):
+        RuntimeConfig(backend, target, Path("model.rkllm"), 128, 0.8, 0.9, 1, 1.1)
+
+
+def test_benchmark_nested_runtime_enforces_rk_target(tmp_path: Path) -> None:
+    path = tmp_path / "benchmark.yaml"
+    path.write_text(
+        "prompts: [hello]\n"
+        "iterations: 1\n"
+        "runtime:\n"
+        "  backend: mock\n"
+        "  target: s100\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="target"):
+        load_benchmark_config(path)
+
+
+@pytest.mark.parametrize("field", ["temperature", "top_p", "repeat_penalty"])
+@pytest.mark.parametrize("yaml_value", [".nan", ".inf", "-.inf"])
+def test_runtime_config_rejects_non_finite_sampling_values(
+    tmp_path: Path, field: str, yaml_value: str
+) -> None:
+    path = tmp_path / "runtime.yaml"
+    path.write_text(
+        f"backend: mock\ntarget: host\n{field}: {yaml_value}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=field):
+        load_runtime_config(path)
