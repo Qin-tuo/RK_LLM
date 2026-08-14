@@ -41,3 +41,30 @@ def test_documented_generation_commands_select_a_backend() -> None:
         if "--backend" not in command.group(0)
     ]
     assert missing_backend == []
+
+
+def test_toolkit_install_uses_the_cloned_official_wheel_directory() -> None:
+    requirements = Path("requirements/toolkit.txt").read_text(encoding="utf-8")
+    host_setup = Path("docs/host-setup.md").read_text(encoding="utf-8")
+
+    assert "--no-index" in requirements
+    assert (
+        "--find-links ./third_party/rknn-llm/rkllm-toolkit/packages"
+        in requirements
+    )
+    assert "rkllm-toolkit==1.3.0" in requirements
+    assert "https://github.com/airockchip/rknn-llm.git" in host_setup
+    assert "--branch release-v1.3.0" in host_setup
+    assert "third_party/rknn-llm" in host_setup
+
+
+def test_cloned_upstream_toolkit_repository_is_ignored() -> None:
+    ignore_patterns = Path(".gitignore").read_text(encoding="utf-8").splitlines()
+
+    assert "third_party/rknn-llm/" in ignore_patterns
+
+
+def test_documented_toolkit_virtual_environment_is_ignored() -> None:
+    ignore_patterns = Path(".gitignore").read_text(encoding="utf-8").splitlines()
+
+    assert ".toolkit-venv/" in ignore_patterns

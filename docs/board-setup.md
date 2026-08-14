@@ -30,7 +30,7 @@ rk-llm generate --backend rkllm --config configs/runtime/rk3588.yaml --prompt "h
 
 At the current milestone that command must fail rather than return mock text. Set `RK_LLM_ROOT` to an absolute deployment root only when running outside the repository layout.
 
-Hardware tests are opt-in and require all three variables:
+The hardware prerequisite probe is opt-in and requires all three variables:
 
 ```sh
 RUN_RK_HARDWARE_TESTS=1 \
@@ -39,4 +39,4 @@ RKLLM_MODEL=/absolute/path/to/model.rkllm \
 python3 -m pytest tests/hardware -m hardware
 ```
 
-The present hardware test only probes prerequisites; it is not an inference acceptance test.
+The probe checks only runner executability, model-path readability, and aarch64 architecture. If those checks pass, pytest reports `xfail` because the native protocol, RKLLM Runtime/model loading, and inference are not implemented. It cannot report hardware inference as passed at this milestone.

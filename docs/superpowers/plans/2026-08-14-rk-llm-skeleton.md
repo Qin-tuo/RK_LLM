@@ -917,7 +917,7 @@ git commit -m "feat: add RK LLM skeleton CLI"
 - Create: `docs/board-setup.md`
 - Create: `docs/model-export.md`
 - Create: `docs/benchmark.md`
-- Create: `tests/hardware/test_rkllm_smoke.py`
+- Create: `tests/hardware/test_rkllm_prerequisites.py`
 - Create: `Makefile`
 - Modify: `README.md`
 
@@ -1030,7 +1030,7 @@ int main() {
 `requirements/dev.txt` contains `-e .[dev]`. `requirements/toolkit.txt` pins `rkllm-toolkit==1.3.0`. `requirements/board.txt` documents `rkllm-runtime==1.3.0` as a vendor-supplied board dependency.
 
 ```python
-# tests/hardware/test_rkllm_smoke.py
+# tests/hardware/test_rkllm_prerequisites.py
 import os
 
 import pytest
@@ -1040,7 +1040,7 @@ pytestmark = pytest.mark.hardware
 
 
 @pytest.mark.skipif(os.environ.get("RUN_RK_HARDWARE_TESTS") != "1", reason="RK hardware disabled")
-def test_rkllm_runtime_and_model_are_discoverable() -> None:
+def test_rkllm_prerequisite_paths_and_architecture_are_visible() -> None:
     from pathlib import Path
 
     from rk_llm.platform.probe import probe_rkllm
@@ -1049,6 +1049,10 @@ def test_rkllm_runtime_and_model_are_discoverable() -> None:
         Path(os.environ["RKLLM_RUNNER"]), Path(os.environ["RKLLM_MODEL"])
     )
     assert capabilities.available, capabilities.reason
+    pytest.xfail(
+        "prerequisites are visible, but native runtime/model loading and inference "
+        "are not implemented"
+    )
 ```
 
 The five docs files must cover the approved architecture, x86 mock commands, RK board prerequisites, official model conversion flow, artifact manifest requirements, and real benchmark conditions. `artifacts/README.md` describes ignored subdirectories and forbids committing weights. `README.md` links those docs and labels board support as not yet verified.
@@ -1073,7 +1077,7 @@ Expected: layout test passes, native skeleton builds, prints the explicit unavai
 - [ ] **Step 7: Commit operational scaffolding**
 
 ```bash
-git add README.md Makefile configs requirements third_party native tools artifacts docs tests/unit/test_repository_layout.py tests/hardware/test_rkllm_smoke.py
+git add README.md Makefile configs requirements third_party native tools artifacts docs tests/unit/test_repository_layout.py tests/hardware/test_rkllm_prerequisites.py
 git commit -m "docs: add RK LLM operational skeleton"
 ```
 
