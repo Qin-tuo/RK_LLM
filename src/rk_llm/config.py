@@ -4,6 +4,8 @@ from typing import Any
 
 import yaml
 
+from rk_llm.errors import ConfigurationError
+
 
 @dataclass(frozen=True)
 class RuntimeConfig:
@@ -25,7 +27,10 @@ class BenchmarkConfig:
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as error:
+        raise ConfigurationError(f"failed to parse configuration {path}: {error}") from error
     if not isinstance(data, dict):
         raise ValueError("configuration root must be a mapping")
     return data

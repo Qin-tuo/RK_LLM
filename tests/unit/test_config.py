@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from rk_llm.config import load_benchmark_config, load_runtime_config
+from rk_llm.errors import ConfigurationError
 
 
 def test_load_runtime_config_resolves_model_path(tmp_path: Path) -> None:
@@ -21,6 +22,16 @@ def test_runtime_config_rejects_unknown_backend(tmp_path: Path) -> None:
     path = tmp_path / "bad.yaml"
     path.write_text("backend: gpu\ntarget: host\n", encoding="utf-8")
     with pytest.raises(ValueError, match="backend"):
+        load_runtime_config(path)
+
+
+def test_malformed_yaml_is_reported_as_configuration_error_with_path(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "malformed.yaml"
+    path.write_text("backend: [mock\n", encoding="utf-8")
+
+    with pytest.raises(ConfigurationError, match=str(path)):
         load_runtime_config(path)
 
 
