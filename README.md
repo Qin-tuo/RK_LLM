@@ -27,6 +27,7 @@ Mock generation prints pure text (`mock: hello`) to standard output. Mock result
 
 ## Documentation
 
+- [Implementation roadmap](docs/implementation-roadmap.md)
 - [Architecture and module boundaries](docs/architecture.md)
 - [x86 development and conversion-host setup](docs/host-setup.md)
 - [RK3588 board prerequisites and current limitations](docs/board-setup.md)
