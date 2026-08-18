@@ -6,10 +6,13 @@
 > 状态日期：2026-08-18
 >
 > 当前检查点：RKNN3 Toolkit 1.0.4、Model Zoo 依赖和 RTX 5070 CUDA 环境均已验证；
-> Qwen2.5-0.5B 的 GRQ 量化、ONNX/配置/Tokenizer/Embedding 导出、RKNN3 模型编译和
-> RK3588 ARM64 C++ Demo 交叉编译均已完成。Demo 已在 Ubuntu 22.04 Docker 环境重新
-> 编译，并验证所有部署 ELF 均兼容端侧 glibc 2.35。下一步是增量传输新程序和动态库，
-> 然后使用 RK1828 执行首次端侧推理。
+> Qwen2.5-0.5B 的 GRQ 量化、ONNX/配置/Tokenizer/Embedding 导出和 RK3588 ARM64 C++
+> Demo 交叉编译均已完成。Demo 已验证兼容端侧 glibc 2.35。Toolkit 1.0.4 接受
+> `--platform rk1820` 和 `--platform rk1828`，但两种参数实测生成的 `.rknn/.weight` 哈希
+> 完全一致，模型内均包含 `RK1820` 标识，说明该版本将两者归一到同一套 RK182X 模型格式。
+> 当前模型已在 RK1828 上完整生成文本并正常释放资源。实测稳定配置为
+> `Work Mode=EFFICIENT`、`Prefill Mode=PERFORMANCE`、`core_mask=0xff`；把 Work Mode 改为
+> `NORMAL` 后，同一模型和同一提示词会在首次 `rknn3_session_wait` 时使设备端掉线。
 
 ## 1. 整体链路
 
@@ -112,7 +115,9 @@ RK1828 PCIe 协处理器：
 - PCIe 驱动：`3.3.0`；
 - RK1828 固件：`1.0.4`；
 - RKNN3 API：`1.0.4`；
-- 实测状态：`Online`、`Health OK`。
+- 实测状态：`Online`、`Health OK`；
+- 已验证运行模式：Work Mode `EFFICIENT`、Prefill Mode `PERFORMANCE`；
+- Qwen2.5-0.5B Core Mask：`0xff`，必须使用全部 8 个 NPU 核。
 
 端侧已有以下运行组件：
 
@@ -399,6 +404,18 @@ cd ~/rk1828-work/rknn3-model-zoo/examples/Qwen2_5/python
 export PYTHONPATH=~/rk1828-work/rknn3-model-zoo
 set -o pipefail
 
+# 无论内部字符串是什么，都先按时间戳隔离现有产物，避免覆盖后无法比较。
+BACKUP_DIR="../model/llm/previous-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$BACKUP_DIR"
+for file in \
+  ../model/llm/Qwen2.5-0.5B-Instruct.rknn \
+  ../model/llm/Qwen2.5-0.5B-Instruct.weight; do
+  [ ! -f "$file" ] || mv "$file" "$BACKUP_DIR/"
+done
+
+# 先单独验证平台参数。返回值不是 0 时不要开始耗时编译。
+python -c "from rknn.api import RKNN; r=RKNN(verbose=True); ret=r.config(target_platform='rk1820', quantized_dtype='w4a16', quantized_algorithm='grq', quantized_method='group32'); print('rknn.config return:', ret); r.release(); raise SystemExit(ret)"
+
 python export_rknn.py \
   --onnx_path ../model/llm/Qwen2.5-0.5B-Instruct.onnx \
   --config ../model/llm/Qwen2.5-0.5B-Instruct.config.pkl \
@@ -411,23 +428,29 @@ python export_rknn.py \
 `--platform` 是必填参数；省略时脚本只会打印
 `the following arguments are required: --platform` 并退出，不会开始编译。
 
-### 10.1 为什么 RK1828 使用 `--platform rk1820`
+### 10.1 Toolkit 1.0.4 的 RK182X 平台映射
 
 实际 PCIe 协处理器是 **RK1828**，`rknn-smi` 显示的芯片型号无需也不应该改变。
-但在 RKNN3 Toolkit 1.0.4 中，`target_platform` 是编译器目标标识，不是板卡型号探测参数。
-官方 API 文档同时将 RK1820 和 RK1828 列为适用芯片，但该版本当前支持的
-`target_platform` 值只有 `rk1820`；官方 `export_rknn.py` 也使用 `rk1820` 作为示例。
+在当前安装的 RKNN3 Toolkit 1.0.4 中，`rknn.config(target_platform='rk1828')` 返回 `0`，
+但它与 `target_platform='rk1820'` 生成的 `.rknn/.weight` 字节完全相同，内部可打印标识均为
+`RK1820`。因此这个版本实际上把两个输入映射到同一套 RK182X 模型格式。
+
+官方资料本身存在表述差异：《用户指南》把 RK1820、RK1828、RK3572 列为可选目标，并在 FAQ
+中称三者模型互不兼容；同版本 API 参考和 wheel 内 `rknn.py` 只列出 `rk1820`，Model Zoo
+面向 RK1820/RK1828 的示例也使用 `target_platform='rk1820'`。本流程以当前安装包的实际输出
+和官方示例为准，固定使用 `rk1820`，不再通过 `strings` 区分 RK1820 与 RK1828。
 
 因此：
 
 - RK1828 是真实硬件型号；
-- `--platform rk1820` 是 Toolkit 1.0.4 对 RK1820/RK1828 使用的编译目标；
-- 不要把参数改成 `--platform rk1828`，该版本可能报告不支持的目标平台；
-- 生成的 `.rknn` 仍部署到当前 RK3588 + RK1828 设备。
+- 当前 Toolkit 1.0.4 使用 `--platform rk1820` 生成 RK182X 模型；
+- `--platform rk1828` 虽然被接受，但不会生成不同的二进制；
+- 端侧固件文件名仍为 `rknn3_rk1820.img`，不代表模型目标也应选择 RK1820；
+- `build-linux.sh -t rk3588` 仍保持不变，因为 C++ Demo 运行在 RK3588 主机。
 
-这里的两个构建平台参数含义也不同：
+这里的两个平台参数属于不同对象：
 
-- `export_rknn.py --platform rk1820`：RK1820/RK1828 协处理器的 RKNN3 编译目标；
+- `export_rknn.py --platform rk1820`：当前 Toolkit 1.0.4 的 RK182X 编译目标；
 - `build-linux.sh -t rk3588`：运行 C++ Demo 的 ARM64 主机是 RK3588。
 
 RKNN3 使用权重分离模式，检查最终四个部署文件：
@@ -445,9 +468,9 @@ ls -lh ../model/llm/Qwen2.5-0.5B-Instruct.{rknn,weight,tokenizer.gguf,embed.bin}
 | `.tokenizer.gguf` | 文本与 token 之间的转换规则 |
 | `.embed.bin` | Token embedding 权重 |
 
-### 10.2 本次 RKNN3 编译结果
+### 10.2 当前模型与运行模式验证
 
-本次编译于 2026-08-18 10:50 完成。日志末尾包含以下成功标志：
+首次编译于 2026-08-18 10:50 完成，编译日志本身没有报错：
 
 ```text
 I rknn building done.
@@ -455,7 +478,13 @@ I RKNN: Stage code generation completed successfully
 I RKNN: === RKNN Compiler All stages completed successfully ===
 ```
 
-最终部署文件如下：
+模型可打印字符串中包含 `RK1820`：
+
+```bash
+strings ../model/llm/Qwen2.5-0.5B-Instruct.rknn | grep -m1 RK1820
+```
+
+当前产物如下：
 
 | 文件 | 字节数 | 约合大小 |
 | --- | ---: | ---: |
@@ -464,7 +493,86 @@ I RKNN: === RKNN Compiler All stages completed successfully ===
 | `Qwen2.5-0.5B-Instruct.tokenizer.gguf` | 5,931,031 | 5.7 MiB |
 | `Qwen2.5-0.5B-Instruct.embed.bin` | 272,269,312 | 259.7 MiB |
 
-除检查日志外，还应重新加载生成的模型，排除仅留下不完整输出文件的情况：
+2026-08-18 的成功/失败对照使用完全相同的模型文件、`Hi` 提示词和 `0xff` Core Mask，唯一已知
+关键差异是 Work Mode：
+
+| Work Mode | Prefill Mode | 结果 |
+| --- | --- | --- |
+| `EFFICIENT` | `PERFORMANCE` | 完整生成 `Hello! How can I assist you today?`，状态查询与资源释放正常 |
+| `NORMAL` | `PERFORMANCE` | 首次 `rknn3_session_wait` 断链，返回 `ERROR_PIPE`、`ERROR_NO_DEVICE` |
+
+成功日志确认 API、`rknn3server`、`rknn3rt_srv` 均为 `1.0.4`，8 个 NPU 核的命令、权重、内部
+缓冲和 KV Cache 均成功分配与传输。实测性能为 Prefill `617.44 token/s`、Generate
+`129.10 token/s`。模型已经包含 Prefill `[1, 128, 896]` 和 Decode `[1, 1, 896]` 两种输入
+Shape，无需为了该问题重新导出或重新编译。
+
+`open /dev/dma_heap/system-dma32 fail` 不是本次故障：Runtime 随后已从普通 DMA Heap 成功分配。
+首次连接先访问通用 Proxy、取得哈希后重连到带哈希的 Socket 也属于正常流程，只要随后出现
+`Transfer interface successfully opened via retry` 即可。
+
+切换 Work Mode 为 `NORMAL` 后，故障发生于全部模型数据传输成功、发送首次推理任务之后，且没有
+返回任何 token。per-device transfer proxy 子进程随即退出；`rknn-smi` 读取到 PCIe magic、
+RC/EP version 均为 `0xffffffff`，并判定 `PCIe device 0 is not alive`。这说明 RK1828 固件或
+执行服务在 `NORMAL` 模式的 8 核 LLM 路径中崩溃/复位，不是 Tokenizer、模型哈希、平台字符串、
+内存分配或提示词导致。部署目录中的 Runtime 动态库与 `/usr/lib` 中的版本也逐字节一致。
+
+设备恢复后应再次确认 `Health OK`、全部 PCIe 错误计数为 `0`，并同时存在父 transfer proxy 和
+per-device transfer proxy 子进程。`systemctl` 只跟踪父进程，因此显示 `active (running)` 不能
+单独证明 RK1828 仍然在线。`Reset Reason` 为 `NPOR` 时只反映最近一次上电复位，无法还原此前
+的崩溃原因。
+
+`rknn-smi log -t collect` 默认写入 `/data`，但当前系统没有该目录，因此应显式指定日志目录：
+
+```bash
+sudo mkdir -p /home/ubuntu/userdata/rknn-logs
+sudo rknn-smi log -t collect -s /home/ubuntu/userdata/rknn-logs
+sudo find /home/ubuntu/userdata/rknn-logs -maxdepth 2 -type f -ls
+```
+
+本次重启后的设备同时报告 current/last log 均无数据，因此即使修正输出目录，也可能无法取回上次
+崩溃的设备端日志。
+
+### 10.3 验证重新编译产物
+
+`strings model.rknn | grep RK1820` 只能说明文件中存在该文本，不能证明当前构建实际采用了
+RK1820。wheel 的公共代码和二进制中同时存在 RK1820、RK1828 及 RK182X 相关标识，模型还
+可能携带共享架构或后端名称。因此 `strings` 只作辅助观察，不能作为部署门槛。
+
+先检查新产物及日志：
+
+```bash
+cd ~/rk1828-work/rknn3-model-zoo/examples/Qwen2_5/python
+
+sha256sum \
+  ../model/llm/Qwen2.5-0.5B-Instruct.rknn \
+  ../model/llm/Qwen2.5-0.5B-Instruct.weight
+
+stat -c '%y %s %n' \
+  ../model/llm/Qwen2.5-0.5B-Instruct.rknn \
+  ../model/llm/Qwen2.5-0.5B-Instruct.weight
+
+grep -Ein 'rk1828|rk1820|target.*platform|platform|error|fail' \
+  qwen2.5-0.5b-rknn.log | head -100
+
+strings ../model/llm/Qwen2.5-0.5B-Instruct.rknn \
+  | grep -m5 -E 'RK1820|RK1828|RK182X'
+```
+
+当前已在稳定模式下跑通的模型 SHA-256 为：
+
+```text
+013dd8c92fa7c08feaac9b3fd9c6dc8370b5913589bb5ba8d2d7c61a8552ee6a  Qwen2.5-0.5B-Instruct.rknn
+94bbef9ec8eb5eee08473105af3d88bcce062283db763adba15804d03b7e40f8  Qwen2.5-0.5B-Instruct.weight
+```
+
+判定规则：
+
+- `rknn.config return` 为 `0`：参数被 Toolkit 接受；
+- `rk1820` 与 `rk1828` 两次构建哈希完全相同：确认当前版本执行了 RK182X 平台归一化；
+- 端侧文件与上述哈希一致：确认运行的是已经在 RK1828 上成功生成文本的同一产物；
+- 不再根据 `strings` 输出决定是否部署。
+
+离线重新加载生成的模型，排除不完整输出文件：
 
 ```bash
 source ~/rk1828-work/.venv/bin/activate
@@ -762,11 +870,49 @@ scp "$DEMO_DIR"/lib/*.so \
 
 ## 13. 在 RK3588 上运行
 
+### 13.1 固定已验证运行模式
+
+`rknn-smi` 当前支持的模式编号如下：
+
+| 配置 | 编号 | 含义 | 当前结论 |
+| --- | ---: | --- | --- |
+| Work Mode | `0` | `EFFICIENT` | 已验证可运行 |
+| Work Mode | `1` | `NORMAL` | 当前 1.0.4 环境会触发 RK1828 掉线 |
+| Work Mode | `2` | `PERFORMANCE` | 尚未验证，不用于当前流程 |
+| Prefill Mode | `0` | `EFFICIENT` | 可配置，但不是本次成功组合 |
+| Prefill Mode | `1` | `PERFORMANCE` | 已验证可运行 |
+
+模式应在没有 Demo 运行时设置。先确认设备和两个 transfer proxy 进程都在线，再固定为
+`EFFICIENT/PERFORMANCE`：
+
+```bash
+sudo rknn-smi info -l
+ps -ef | grep '[r]knn3_transfer'
+
+sudo rknn-smi set -t work_mode -d 0 -c 0 -s 0
+sudo rknn-smi set -t prefill_mode -d 0 -c 0 -s 1
+
+sudo rknn-smi info -t work_mode
+sudo rknn-smi info -t prefill_mode
+```
+
+必须看到：
+
+```text
+Chip Work Mode    : EFFICIENT
+Chip Prefill Mode : PERFORMANCE
+```
+
+不要把 Work Mode 改为 `NORMAL`。在当前 Runtime/Firmware `1.0.4` 上，该模式会在首次 8 核
+LLM 推理时使 per-device transfer proxy 退出，并导致 RK1828 变为 not alive。
+
+### 13.2 执行推理
+
 ```bash
 ssh ubuntu@<RK3588_IP>
 cd /home/ubuntu/userdata/rknn_Qwen2_5_demo
 
-export LD_LIBRARY_PATH="$PWD/lib:$LD_LIBRARY_PATH"
+export LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 sudo rknn-smi info -l
 
 ./rknn_qwen2_5_demo \
@@ -775,14 +921,27 @@ sudo rknn-smi info -l
   model/Qwen2.5-0.5B-Instruct.tokenizer.gguf \
   model/Qwen2.5-0.5B-Instruct.embed.bin \
   0xff \
-  "你好，请介绍一下你自己。"
+  "Hi"
 ```
 
-在另一个端侧终端监控 RK1828：
+这个模型声明使用 8 个 NPU 核，因此 Core Mask 必须为 `0xff`。使用 `0x1` 会在模型初始化阶段
+直接返回：
+
+```text
+core_mask 1 is not match with npu core number 8
+```
+
+已知基线 `Hi` 跑通后，再替换为中文 Prompt。稳定性隔离阶段不要同时运行连续的
+`rknn-smi info -w`，只在推理前后执行一次状态检查，避免增加额外通信变量：
 
 ```bash
-sudo rknn-smi info -w
+sudo rknn-smi info -l
+sudo rknn-smi info -t health
 ```
+
+Tokenizer GGUF 中显示的 `qwen2.context_length=32768` 是源模型元数据，不是当前 RKNN3 产物的
+实际运行上限。Runtime 日志显示本次编译模型的 `max context length(final)` 和
+`kvcache_buffer_len` 均为 `1024`，应用侧应按 1024 token 上下文限制处理。
 
 验证成功的最低标准：
 
@@ -791,11 +950,47 @@ sudo rknn-smi info -w
 - `rknn-smi` 显示 NPU 利用率和显存占用上升；
 - 没有固件、PCIe、Runtime 或版本不匹配错误。
 
+### 13.3 `ERROR_PIPE` 后恢复 RK1828
+
+出现以下组合时，对端 RK1828 已经掉线，继续重试 Demo 没有意义：
+
+```text
+The connection has been closed
+ERROR_PIPE
+ERROR_NO_DEVICE
+PCIe device 0 is not alive
+magic=ffffffff
+```
+
+`systemctl status rk182x.service` 可能仍显示 `active (running)`，因为父 proxy 还在；如果
+`rknn3_transfer_proxy_b98e6c51 -s 0000:01:00.0` 子进程消失，设备实际已经不可用。先尝试：
+
+```bash
+sudo systemctl stop rk182x.service
+sudo killall rknn3_transfer_proxy 2>/dev/null || true
+sleep 3
+
+sudo systemctl reset-failed rk182x.service
+sudo systemctl start rk182x.service
+sleep 10
+
+sudo systemctl status rk182x.service --no-pager -l
+ps -ef | grep '[r]knn3_transfer'
+sudo rknn-smi info -l
+```
+
+如果仍然读取到 `0xffffffff` 或 `rknn-smi` 初始化失败，执行 `sudo reboot`；重启仍不能恢复时，
+对 RK3588 和 RK1828 模块冷断电后重新上电。`pcie_upgrade_tool ... rd` 在设备不处于 loader mode
+时不会完成恢复，不要把 `Device is not in loader mode` 当作模型错误。
+
+恢复 Online 后必须重新执行第 13.1 节，确认 Work Mode 已回到 `EFFICIENT`、Prefill Mode 为
+`PERFORMANCE`，再运行 Demo。
+
 ## 14. 当前进度
 
 | 阶段 | 状态 |
 | --- | --- |
-| RK3588/RK1828 硬件检查 | 已完成 |
+| RK3588/RK1828 硬件检查 | 已完成；掉线后可通过服务重启、系统重启或冷上电恢复 |
 | RKNN3 Runtime/固件检查 | 已完成，版本 1.0.4 |
 | x86 基础工具安装 | 已完成 |
 | Python 3.12 虚拟环境 | 已完成 |
@@ -805,18 +1000,18 @@ sudo rknn-smi info -w
 | Qwen2.5-0.5B 下载 | 已完成，`model.safetensors` 约 988 MB |
 | Model Zoo 额外依赖 | 已完成，AutoGPTQ 使用无可选 CUDA 扩展模式 |
 | GRQ 量化及 ONNX/配置导出 | 已完成，实测约 2 分 37 秒 |
-| RKNN3 编译 | 已完成，`--platform rk1820`，模型重新加载返回 `0` |
+| RKNN3 编译 | 已完成；`rk1820` 与 `rk1828` 实测生成相同哈希的 RK182X 产物 |
 | ARM64 Demo 交叉编译 | 已完成，Ubuntu 22.04 构建，最高依赖 `GLIBC_2.34` |
-| 端侧推理 | 未开始 |
-| 接入 `RK_LLM` | 官方 Demo 验证后进行 |
+| 端侧推理 | 已跑通；稳定组合为 Work `EFFICIENT`、Prefill `PERFORMANCE`、Core Mask `0xff` |
+| 运行模式隔离 | Work `NORMAL` 已确认会在首次推理时触发 RK1828 掉线，禁止用于当前流程 |
+| 接入 `RK_LLM` | 完成稳定模式连续回归后进行 |
 
-当前最近的一步是按照第 12.2 节把新程序和动态库增量复制到 RK3588，然后按照第 13 节
-运行 Demo 并同时观察 RK1828 状态。传输前检查部署包和端侧剩余空间：
+当前最近的一步是在固定模式下连续执行单次 Demo 回归，记录成功率和 Prefill/Generate 性能；
+无需重新下载 Hugging Face 权重，也无需重复执行 GRQ、ONNX 导出或 RKNN3 编译。
 
 ```bash
-cd ~/rk1828-work/rknn3-model-zoo
-du -sh install/rk3588_linux_aarch64/rknn_Qwen2_5_demo
-ssh ubuntu@<RK3588_IP> 'uname -m && df -h /home/ubuntu/userdata && sudo rknn-smi info -l'
+sudo rknn-smi info -t work_mode
+sudo rknn-smi info -t prefill_mode
 ```
 
 ## 15. 注意事项
@@ -831,10 +1026,18 @@ ssh ubuntu@<RK3588_IP> 'uname -m && df -h /home/ubuntu/userdata && sudo rknn-smi
    与端侧安装版本或官方安装包核对哈希。
 8. 不要为运行宿主机生成的程序而升级端侧 glibc；应用程序必须在不高于目标端侧的 glibc
    基线上构建，并在传输前检查全部部署 ELF 的符号版本。
+9. 当前 Toolkit 1.0.4 对 `rk1820` 与 `rk1828` 生成相同的 RK182X 产物，流程固定使用官方
+   示例中的 `target_platform='rk1820'`；不要再用模型内的 `RK1820` 字符串判断硬件兼容性。
+10. 当前端侧稳定配置是 Work Mode `EFFICIENT`、Prefill Mode `PERFORMANCE`、Core Mask
+    `0xff`；Work Mode `NORMAL` 会导致 RK1828 掉线。
+11. `rk182x.service` 为 active 只说明父 transfer proxy 存活；必须同时检查 per-device 子进程和
+    `rknn-smi info -l`。
+12. Tokenizer 元数据中的 32768 上下文长度不能覆盖 RKNN3 产物的 1024 token 实际上限。
 
 ## 16. 官方参考
 
 - [RKNN3 Toolkit](https://github.com/airockchip/rknn3-toolkit)
+- [RKNN3 SDK 1.0.4 中文用户指南](https://github.com/airockchip/rknn3-toolkit/blob/main/doc/02_Rockchip_RKNPU3_User_Guide_RKNN3_SDK_V1.0.4_CN.pdf)
 - [RKNN3 Toolkit 1.0.4 API 参考](https://github.com/airockchip/rknn3-toolkit/blob/main/doc/03_Rockchip_RKNPU3_API_Reference_RKNN3_Toolkit_V1.0.4_EN.pdf)
 - [RKNN3 Model Zoo](https://github.com/airockchip/rknn3-model-zoo)
 - [Model Zoo 中文部署说明](https://github.com/airockchip/rknn3-model-zoo/blob/main/README_CN.md)
