@@ -1,6 +1,0 @@
-rkllm_toolkit: "1.3.0"
-rkllm_runtime: "1.3.0"
-source_model:
-  repository: deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
-  revision: ad9f0ae0864d7fbcd1cd905e3c6c5b069cc8b562
-target_platform: rk3588

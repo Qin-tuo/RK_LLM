@@ -1,0 +1,29 @@
+schema_version: 1
+rknn3_toolkit:
+  repository: https://github.com/airockchip/rknn3-toolkit.git
+  release: V1.0.4
+  revision: cf292045d77c9ad0377b9fb326f216967475071e
+rknn3_model_zoo:
+  repository: https://github.com/airockchip/rknn3-model-zoo.git
+  release: V1.0.4
+  revision: f63048265b49bd2c6236790087287bed6c6b76fe
+runtime:
+  version: 1.0.4
+  files:
+    - path: include/float16.h
+      sha256: 6e230c07bbcfd0ea75c64d44d1b07ed3e549a88d4bb6908b4b9941d4a04fb424
+    - path: include/rknn3_api.h
+      sha256: 64202b613bb87c6445499cb871e7227f02e9af4720e30750344477ae6e87c16d
+    - path: Linux/aarch64/librknn3_api.so
+      sha256: 113ec97719e04f82e51fcb8badeb18461070ac55ca9a5da87f887f3110b4fcbe
+    - path: Linux/aarch64/librknn3_api_rkcp.so
+      sha256: 5ea77749f44be1f0c2ad0347242d4b431d3907d03eac11d265496ddd80cfd210
+    - path: Linux/aarch64/librknn3_api_native.so
+      sha256: 8ec78e9d294e6ecf2be6ad9e16004ae5c50bcb9a8567d8bac7310ab27b66dd11
+target:
+  host_soc: rk3588
+  accelerator: rk1828
+  compiler_platform: rk1820
+  architecture: aarch64
+  glibc_max: "2.35"
+  glibcxx_max: "3.4.30"

@@ -7,7 +7,8 @@ def test_operational_skeleton_has_required_boundaries() -> None:
         "configs/runtime/mock.yaml",
         "configs/runtime/rk3588.yaml",
         "configs/benchmark/smoke.yaml",
-        "third_party/versions.yaml",
+        "configs/models/qwen2_5_0_5b.yaml",
+        "manifests/upstream.yaml",
         "native/rknn3_qwen_runner/CMakeLists.txt",
         "native/rknn3_qwen_runner/src/main.cpp",
         "tools/export/README.md",
@@ -21,6 +22,7 @@ def test_operational_skeleton_has_required_boundaries() -> None:
         "docs/benchmark.md",
     )
     assert [path for path in required if not Path(path).is_file()] == []
+    assert not Path("third_party/versions.yaml").exists()
 
 
 def test_documented_generation_commands_select_a_backend() -> None:
