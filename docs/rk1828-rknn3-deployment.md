@@ -12,7 +12,9 @@
 > 完全一致，模型内均包含 `RK1820` 标识，说明该版本将两者归一到同一套 RK182X 模型格式。
 > 当前模型已在 RK1828 上完整生成文本并正常释放资源。实测稳定配置为
 > `Work Mode=EFFICIENT`、`Prefill Mode=PERFORMANCE`、`core_mask=0xff`；把 Work Mode 改为
-> `NORMAL` 后，同一模型和同一提示词会在首次 `rknn3_session_wait` 时使设备端掉线。
+> `NORMAL` 或 `PERFORMANCE` 后，同一模型和同一提示词都会在首次 `rknn3_session_wait` 时使
+> 设备端掉线。M.2 固件从 `1.0.4` 更新至 `1.0.401` 后，`PERFORMANCE/PERFORMANCE` 仍能稳定
+> 复现该问题。
 
 ## 1. 整体链路
 
@@ -493,13 +495,14 @@ strings ../model/llm/Qwen2.5-0.5B-Instruct.rknn | grep -m1 RK1820
 | `Qwen2.5-0.5B-Instruct.tokenizer.gguf` | 5,931,031 | 5.7 MiB |
 | `Qwen2.5-0.5B-Instruct.embed.bin` | 272,269,312 | 259.7 MiB |
 
-2026-08-18 的成功/失败对照使用完全相同的模型文件、`Hi` 提示词和 `0xff` Core Mask，唯一已知
-关键差异是 Work Mode：
+2026-08-18 的成功/失败对照使用完全相同的模型文件、`Hi` 提示词和 `0xff` Core Mask，关键差异
+是 Work Mode。前两项使用设备固件 `1.0.4`，第三项是在 M.2 固件升级至 `1.0.401` 后复测：
 
 | Work Mode | Prefill Mode | 结果 |
 | --- | --- | --- |
 | `EFFICIENT` | `PERFORMANCE` | 完整生成 `Hello! How can I assist you today?`，状态查询与资源释放正常 |
 | `NORMAL` | `PERFORMANCE` | 首次 `rknn3_session_wait` 断链，返回 `ERROR_PIPE`、`ERROR_NO_DEVICE` |
+| `PERFORMANCE` | `PERFORMANCE` | 固件 `1.0.401` 下仍在首次 `rknn3_session_wait` 断链，未返回 token |
 
 成功日志确认 API、`rknn3server`、`rknn3rt_srv` 均为 `1.0.4`，8 个 NPU 核的命令、权重、内部
 缓冲和 KV Cache 均成功分配与传输。实测性能为 Prefill `617.44 token/s`、Generate
@@ -510,10 +513,10 @@ Shape，无需为了该问题重新导出或重新编译。
 首次连接先访问通用 Proxy、取得哈希后重连到带哈希的 Socket 也属于正常流程，只要随后出现
 `Transfer interface successfully opened via retry` 即可。
 
-切换 Work Mode 为 `NORMAL` 后，故障发生于全部模型数据传输成功、发送首次推理任务之后，且没有
-返回任何 token。per-device transfer proxy 子进程随即退出；`rknn-smi` 读取到 PCIe magic、
+切换 Work Mode 为 `NORMAL` 或 `PERFORMANCE` 后，故障发生于全部模型数据传输成功、发送首次
+推理任务之后，且没有返回任何 token。per-device transfer proxy 子进程随即退出；`rknn-smi` 读取到 PCIe magic、
 RC/EP version 均为 `0xffffffff`，并判定 `PCIe device 0 is not alive`。这说明 RK1828 固件或
-执行服务在 `NORMAL` 模式的 8 核 LLM 路径中崩溃/复位，不是 Tokenizer、模型哈希、平台字符串、
+执行服务在非 `EFFICIENT` Work Mode 的 8 核 LLM 路径中崩溃/复位，不是 Tokenizer、模型哈希、平台字符串、
 内存分配或提示词导致。部署目录中的 Runtime 动态库与 `/usr/lib` 中的版本也逐字节一致。
 
 设备恢复后应再次确认 `Health OK`、全部 PCIe 错误计数为 `0`，并同时存在父 transfer proxy 和
@@ -877,8 +880,8 @@ scp "$DEMO_DIR"/lib/*.so \
 | 配置 | 编号 | 含义 | 当前结论 |
 | --- | ---: | --- | --- |
 | Work Mode | `0` | `EFFICIENT` | 已验证可运行 |
-| Work Mode | `1` | `NORMAL` | 当前 1.0.4 环境会触发 RK1828 掉线 |
-| Work Mode | `2` | `PERFORMANCE` | 尚未验证，不用于当前流程 |
+| Work Mode | `1` | `NORMAL` | 固件 1.0.4 下会触发 RK1828 掉线 |
+| Work Mode | `2` | `PERFORMANCE` | 固件 1.0.401 下仍会触发 RK1828 掉线 |
 | Prefill Mode | `0` | `EFFICIENT` | 可配置，但不是本次成功组合 |
 | Prefill Mode | `1` | `PERFORMANCE` | 已验证可运行 |
 
@@ -903,8 +906,9 @@ Chip Work Mode    : EFFICIENT
 Chip Prefill Mode : PERFORMANCE
 ```
 
-不要把 Work Mode 改为 `NORMAL`。在当前 Runtime/Firmware `1.0.4` 上，该模式会在首次 8 核
-LLM 推理时使 per-device transfer proxy 退出，并导致 RK1828 变为 not alive。
+不要把 Work Mode 改为 `NORMAL` 或 `PERFORMANCE`。即使 M.2 固件已更新为 `1.0.401`，
+`PERFORMANCE/PERFORMANCE` 仍会在首次 8 核 LLM 推理时使 per-device transfer proxy 退出，
+并导致 RK1828 变为 not alive。
 
 ### 13.2 执行推理
 
@@ -950,6 +954,10 @@ Tokenizer GGUF 中显示的 `qwen2.context_length=32768` 是源模型元数据�
 - `rknn-smi` 显示 NPU 利用率和显存占用上升；
 - 没有固件、PCIe、Runtime 或版本不匹配错误。
 
+不能只用进程退出码判断成功。实测设备断链并打印 `inference qwen2_5 llm fail! ret=-1` 时，官方
+Demo 仍返回退出码 `0`。自动化回归还必须检查输出包含 `Finished` 和 Prefill/Generate 性能表，
+并拒绝 `ERROR_PIPE`、`ERROR_NO_DEVICE`、`session_query_state fail` 或 `inference ... fail`。
+
 ### 13.3 `ERROR_PIPE` 后恢复 RK1828
 
 出现以下组合时，对端 RK1828 已经掉线，继续重试 Demo 没有意义：
@@ -966,6 +974,9 @@ magic=ffffffff
 `rknn3_transfer_proxy_b98e6c51 -s 0000:01:00.0` 子进程消失，设备实际已经不可用。先尝试：
 
 ```bash
+sudo rknn-smi reset -t hw -d 0
+sleep 5
+
 sudo systemctl stop rk182x.service
 sudo killall rknn3_transfer_proxy 2>/dev/null || true
 sleep 3
@@ -979,19 +990,191 @@ ps -ef | grep '[r]knn3_transfer'
 sudo rknn-smi info -l
 ```
 
-如果仍然读取到 `0xffffffff` 或 `rknn-smi` 初始化失败，执行 `sudo reboot`；重启仍不能恢复时，
-对 RK3588 和 RK1828 模块冷断电后重新上电。`pcie_upgrade_tool ... rd` 在设备不处于 loader mode
-时不会完成恢复，不要把 `Device is not in loader mode` 当作模型错误。
+如果硬件复位命令失败、仍然读取到 `0xffffffff` 或 `rknn-smi` 初始化失败，执行 `sudo reboot`；
+重启仍不能恢复时，对 RK3588 和 RK1828 模块冷断电后重新上电。`pcie_upgrade_tool ... rd` 在设备
+不处于 loader mode 时不会完成恢复，不要把 `Device is not in loader mode` 当作模型错误。
+
+固件 `1.0.401` 环境已实测 `sudo rknn-smi reset -t hw -d 0` 能在
+`PERFORMANCE/PERFORMANCE` 导致设备掉线后成功执行 PCIe 硬件复位。随后重启
+`rk182x.service`、重新设置模式，即可恢复父子两个 transfer proxy 和模型推理，无需整机断电。
 
 恢复 Online 后必须重新执行第 13.1 节，确认 Work Mode 已回到 `EFFICIENT`、Prefill Mode 为
 `PERFORMANCE`，再运行 Demo。
+
+### 13.4 M.2 固件 1.0.401 更新记录
+
+本机 RK1828 使用 M.2 接口，应使用 `rknn3_rk182x_m2_installer_arm64.tgz`，不能使用 SODIMM
+安装包。2026-08-18 实测包和固件哈希如下：
+
+```text
+eba8a3bde32475b5e647f3f4c0cf249c2cef4f332e3c11af33a29dbb67174f20  rknn3_rk182x_m2_installer_arm64.tgz
+e27316e32e2908322f43332a90d46cd649a06fe57638ecf279f70b9c85ecabf1  rknn3_rk1820.img (1.0.401)
+76aa4d0b320ffa74db2d5ef206cb545b57dce8e16ebfe6fb415e424a2411120b  rknn3_rk1820.img (原 1.0.4)
+```
+
+包内 `librknn3_api.so`、`librknn3_api_rkcp.so`、`rknn3_transfer_proxy`、`rknn3_startup`
+和 `pcie_upgrade_tool` 与当前系统逐字节相同，故本次只替换
+`/lib/firmware/rknn3_rk1820.img`。不要直接运行包内 `install.sh`：它会额外安装并启用
+`rknn3.service`，与当前 `/etc/systemd/system/rk182x.service` 重复管理同一设备。
+
+固件运行在 RK1828 内存中。替换磁盘文件后直接重启服务会遇到
+`Device boot state: 0xffffffff` 和 `Device is not in maskrom mode or loader mode`；必须让 M.2
+模块进入 loader 状态，必要时对整机冷断电再上电。成功启动日志必须包含
+`Running subsoc_os code...OK` 和 `Downloading firmware OK`，`rknn-smi -v` 应显示
+`PCIe Device 0 firmware version: 1.0.401`。
+
+固件升级解决了安装包陈旧问题，但没有解决 Qwen 在 `PERFORMANCE` Work Mode 下的首轮推理
+断链。因此当前生产和回归配置仍固定为 `EFFICIENT/PERFORMANCE`。
+
+在固件 `1.0.401`、`EFFICIENT/PERFORMANCE`、Core Mask `0xff` 下，使用同一 `Hi` 提示词连续
+执行 5 次，结果为 5/5 成功、0 个断链错误，测试后两个 transfer proxy 均保持在线：
+
+| 指标 | 平均值 | 范围 |
+| --- | ---: | ---: |
+| Prefill | 490.70 token/s | 486.81-497.10 token/s |
+| Generate | 115.47 token/s | 113.95-117.03 token/s |
+
+旧固件 `1.0.4` 的单次成功基线为 Prefill `617.44 token/s`、Generate `129.10 token/s`。新固件
+5 次均值分别低约 20.5% 和 10.6%，但旧数据只有一个样本，暂记为观测差异；需要在相同温度、
+频率和重复次数下重新测量旧固件，才能判断是否存在固件性能回退。
+
+中文提示词 `你好，请介绍一下你自己。` 也已完整生成 149 token 并正常结束，实测 Prefill
+`503.86 token/s`、Generate `104.95 token/s`，推理后父子两个 transfer proxy 均保持在线。
+
+### 13.5 RKNN 常用命令速查
+
+查看主机工具、驱动、设备固件和 API 版本：
+
+```bash
+sudo rknn-smi -v
+sudo rknn-smi info -l
+```
+
+查看健康状态、复位原因、PCIe 错误和运行模式：
+
+```bash
+sudo rknn-smi info -t health -d 0 -c 0
+sudo rknn-smi info -t reset_reason -d 0 -c 0
+sudo rknn-smi info -t pcie_err -d 0
+sudo rknn-smi info -t work_mode -d 0 -c 0
+sudo rknn-smi info -t prefill_mode -d 0 -c 0
+```
+
+查看温度、功耗、频率和内存：
+
+```bash
+sudo rknn-smi info -t temp -d 0 -c 0
+sudo rknn-smi info -t power -d 0 -c 0
+sudo rknn-smi info -t cpu_freq -d 0 -c 0
+sudo rknn-smi info -t npu_freq -d 0 -c 0
+sudo rknn-smi info -t memory -d 0 -c 0
+```
+
+设置本机已验证稳定的模式：
+
+```bash
+# Work Mode: 0=EFFICIENT, 1=NORMAL, 2=PERFORMANCE
+sudo rknn-smi set -t work_mode -d 0 -c 0 -s 0
+
+# Prefill Mode: 0=EFFICIENT, 1=PERFORMANCE
+sudo rknn-smi set -t prefill_mode -d 0 -c 0 -s 1
+```
+
+管理服务并确认父子两个 transfer proxy 都在线：
+
+```bash
+sudo systemctl status rk182x.service --no-pager -l
+sudo systemctl restart rk182x.service
+sudo journalctl -b -u rk182x.service --no-pager -l | tail -100
+ps -ef | grep '[r]knn3_transfer'
+sudo ss -xlp | grep transfer_proxy3
+```
+
+设备掉线后的标准恢复流程：
+
+```bash
+sudo rknn-smi reset -t hw -d 0
+sleep 5
+sudo systemctl restart rk182x.service
+sleep 10
+
+sudo rknn-smi set -t work_mode -d 0 -c 0 -s 0
+sudo rknn-smi set -t prefill_mode -d 0 -c 0 -s 1
+sudo rknn-smi info -l
+ps -ef | grep '[r]knn3_transfer'
+```
+
+检查 PCIe 枚举、驱动绑定和磁盘固件：
+
+```bash
+lspci -s 01:00.0 -nn
+readlink -f /sys/bus/pci/devices/0000:01:00.0/driver
+ls -l /dev/pcie-rkep-*
+sha256sum /lib/firmware/rknn3_rk1820.img
+strings /lib/firmware/rknn3_rk1820.img | grep -E 'OS_VERSION|rknn3rt_srv version' | tail
+```
+
+收集故障日志：
+
+```bash
+LOG_DIR=/home/ubuntu/userdata/rknn-logs
+sudo mkdir -p "$LOG_DIR"
+sudo rknn-smi log -t collect -s "$LOG_DIR"
+sudo journalctl -b -u rk182x.service --no-pager -l | \
+  sudo tee "$LOG_DIR/rk182x-service.log" >/dev/null
+sudo dmesg -T | grep -Ei \
+  'rknn|npu|pcie|aer|smmu|fault|reset|timeout|watchdog' \
+  | sudo tee "$LOG_DIR/kernel-rknn-pcie.log" >/dev/null
+```
+
+执行当前 Qwen2.5-0.5B 单次推理：
+
+```bash
+cd /home/ubuntu/userdata/rknn_Qwen2_5_demo
+export LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+./rknn_qwen2_5_demo \
+  model/Qwen2.5-0.5B-Instruct.rknn \
+  model/Qwen2.5-0.5B-Instruct.weight \
+  model/Qwen2.5-0.5B-Instruct.tokenizer.gguf \
+  model/Qwen2.5-0.5B-Instruct.embed.bin \
+  0xff \
+  '你好，请介绍一下你自己。'
+```
+
+当前 Demo 没有内置交互模式。下面的 Bash 循环可以实现自由输入，但每轮都会重新加载模型且不
+保留对话上下文，只适合临时调试：
+
+```bash
+cd /home/ubuntu/userdata/rknn_Qwen2_5_demo
+export LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+while IFS= read -e -r -p 'You> ' prompt; do
+  case "$prompt" in
+    /exit|/quit) break ;;
+    '') continue ;;
+  esac
+
+  ./rknn_qwen2_5_demo \
+    model/Qwen2.5-0.5B-Instruct.rknn \
+    model/Qwen2.5-0.5B-Instruct.weight \
+    model/Qwen2.5-0.5B-Instruct.tokenizer.gguf \
+    model/Qwen2.5-0.5B-Instruct.embed.bin \
+    0xff \
+    "$prompt"
+done
+```
+
+真正的多轮交互必须让模型和 RKNN3 Session 常驻，并在每轮追加消息历史或复用 KV Cache。
+实现时应扩展 C++ Runner，或验证安装包中的 OpenAI 兼容 `rkllm3-server` 后用 CLI 客户端连接；
+不要用上述 Bash 循环冒充有上下文的多轮会话。
 
 ## 14. 当前进度
 
 | 阶段 | 状态 |
 | --- | --- |
-| RK3588/RK1828 硬件检查 | 已完成；掉线后可通过服务重启、系统重启或冷上电恢复 |
-| RKNN3 Runtime/固件检查 | 已完成，版本 1.0.4 |
+| RK3588/RK1828 硬件检查 | 已完成；1.0.401 下已验证 `rknn-smi reset -t hw` 可恢复掉线设备 |
+| RKNN3 Runtime/固件检查 | API 1.0.4；M.2 设备固件已更新至 1.0.401 |
 | x86 基础工具安装 | 已完成 |
 | Python 3.12 虚拟环境 | 已完成 |
 | Toolkit 和 Model Zoo 获取 | 已完成 |
@@ -1002,8 +1185,8 @@ sudo rknn-smi info -l
 | GRQ 量化及 ONNX/配置导出 | 已完成，实测约 2 分 37 秒 |
 | RKNN3 编译 | 已完成；`rk1820` 与 `rk1828` 实测生成相同哈希的 RK182X 产物 |
 | ARM64 Demo 交叉编译 | 已完成，Ubuntu 22.04 构建，最高依赖 `GLIBC_2.34` |
-| 端侧推理 | 已跑通；稳定组合为 Work `EFFICIENT`、Prefill `PERFORMANCE`、Core Mask `0xff` |
-| 运行模式隔离 | Work `NORMAL` 已确认会在首次推理时触发 RK1828 掉线，禁止用于当前流程 |
+| 端侧推理 | 已跑通；1.0.401 稳定组合连续 5/5 成功，Core Mask `0xff` |
+| 运行模式隔离 | Work `NORMAL` 和 `PERFORMANCE` 均确认会在首次推理时触发 RK1828 掉线 |
 | 接入 `RK_LLM` | 完成稳定模式连续回归后进行 |
 
 当前最近的一步是在固定模式下连续执行单次 Demo 回归，记录成功率和 Prefill/Generate 性能；
@@ -1018,7 +1201,7 @@ sudo rknn-smi info -t prefill_mode
 
 1. 不要使用 RKNN-Toolkit、RKNN-Toolkit2 或 RKLLM-Toolkit 替代 RKNN3 Toolkit。
 2. 不要在 RK3588 上安装 x86 Toolkit wheel；模型转换只在 x86 宿主机执行。
-3. 不要随意覆盖端侧 Runtime、驱动或固件；当前端到端版本已经匹配为 1.0.4。
+3. 不要混用 M.2 与 SODIMM 固件；当前 API 为 1.0.4，M.2 设备固件为 1.0.401。
 4. 不要使用脚本的默认 3B 参数；首轮验证固定使用本地 0.5B 模型。
 5. 模型转换完成不代表硬件推理成功，必须运行 ARM64 Demo 并观察 `rknn-smi`。
 6. 官方 Demo 完整跑通后，再把推理链路接入当前 `RK_LLM` 项目。
@@ -1029,7 +1212,7 @@ sudo rknn-smi info -t prefill_mode
 9. 当前 Toolkit 1.0.4 对 `rk1820` 与 `rk1828` 生成相同的 RK182X 产物，流程固定使用官方
    示例中的 `target_platform='rk1820'`；不要再用模型内的 `RK1820` 字符串判断硬件兼容性。
 10. 当前端侧稳定配置是 Work Mode `EFFICIENT`、Prefill Mode `PERFORMANCE`、Core Mask
-    `0xff`；Work Mode `NORMAL` 会导致 RK1828 掉线。
+    `0xff`；Work Mode `NORMAL` 和 `PERFORMANCE` 都会导致 RK1828 掉线。
 11. `rk182x.service` 为 active 只说明父 transfer proxy 存活；必须同时检查 per-device 子进程和
     `rknn-smi info -l`。
 12. Tokenizer 元数据中的 32768 上下文长度不能覆盖 RKNN3 产物的 1024 token 实际上限。
