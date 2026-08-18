@@ -27,6 +27,7 @@ Mock generation prints pure text (`mock: hello`) to standard output. Mock result
 
 ## Documentation
 
+- [RK3588 + RK1828 RKNN3 deployment workflow](docs/rk1828-rknn3-deployment.md)
 - [Implementation roadmap](docs/implementation-roadmap.md)
 - [Architecture and module boundaries](docs/architecture.md)
 - [x86 development and conversion-host setup](docs/host-setup.md)
