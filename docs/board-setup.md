@@ -2,41 +2,53 @@
 
 ## Current status
 
-Board inference has not been verified. The repository's native runner is an unavailable stub with no vendor headers or RKLLM calls. Building that stub only checks the local C++ toolchain; it does not validate RKLLM Runtime or the NPU.
+The board-side Python package and RKNN3 boundary are tracked, but project-owned
+hardware inference is not implemented in this milestone. The native directory
+contains an unavailable stub, and `RKNN3Backend` remains guarded until the
+Native protocol plan defines and implements runner communication.
 
-## Prerequisites for a future runtime milestone
+The guarded diagnostic is expected to report unavailable even when a candidate
+package contains all prerequisite paths. It must never return mock text as a
+fallback.
 
-- an aarch64 RK3588 target with a supported OS, kernel, NPU driver, and firmware combination;
-- RKLLM Runtime `1.3.0`, including externally supplied headers and libraries from the official release;
-- a `.rkllm` package converted with RKLLM-Toolkit `1.3.0` for `rk3588`;
-- a matching manifest and verified SHA-256 checksum;
-- a completed native adapter linked to the vendor runtime.
+## Synchronization boundary
 
-Record the board image, kernel, driver, firmware, runtime, cooling, and power mode before testing. Do not replace the system driver as an implicit side effect of this project.
+Clone or update this Git repository on RK3588 to synchronize tracked Python
+application logic, configuration, manifests, tests, and documentation. Do not
+copy the host `.vendor/` directory to the board. It contains host-side complete
+upstream checkouts and a build-time Runtime subset, all of which are ignored.
 
-## Skeleton diagnostics
+Models, the aarch64 runner, Runtime shared libraries, package manifest, and
+other binary payloads will be transferred as an immutable deployment package by
+a later host workflow. They remain outside Git. The board owns validation and
+activation of that package, runner lifecycle, application behavior, and real
+benchmark collection.
 
-The following command is expected to return exit code `2` until the model and completed native runner are discoverable:
+## Board baseline
+
+The verified manual baseline uses an aarch64 RK3588 system with Ubuntu 22.04
+and glibc 2.35, compatible RKNN3 Runtime/transport components, and RK1828
+firmware. Do not upgrade board glibc, drivers, Runtime, transport services, or
+firmware as an implicit project step.
+
+The future host build must enforce the recorded ELF symbol ceilings before a
+package is eligible for transfer. A successful source build on a newer host is
+not proof that its executable can run on this board baseline.
+
+## Available checks
+
+The mock backend can be used on a development installation to verify Python
+orchestration only:
 
 ```sh
-rk-llm doctor --backend rkllm --model artifacts/converted_models/deepseek-r1-distill-qwen-1.5b-w8a8-rk3588.rkllm
+python3 -m pip install -e ".[dev]"
+rk-llm doctor --backend mock
+rk-llm generate --backend mock --config configs/runtime/mock.yaml --prompt "hello"
 ```
 
-The future board generation command will remain explicit about its backend:
-
-```sh
-rk-llm generate --backend rkllm --config configs/runtime/rk3588.yaml --prompt "hello"
-```
-
-At the current milestone that command must fail rather than return mock text. Set `RK_LLM_ROOT` to an absolute deployment root only when running outside the repository layout.
-
-The hardware prerequisite probe is opt-in and requires all three variables:
-
-```sh
-RUN_RK_HARDWARE_TESTS=1 \
-RKLLM_RUNNER=/absolute/path/to/rkllm_runner \
-RKLLM_MODEL=/absolute/path/to/model.rkllm \
-python3 -m pytest tests/hardware -m hardware
-```
-
-The probe checks only runner executability, model-path readability, and aarch64 architecture. If those checks pass, pytest reports `xfail` because the native protocol, RKLLM Runtime/model loading, and inference are not implemented. It cannot report hardware inference as passed at this milestone.
+Hardware prerequisite tests remain opt-in and do not perform inference. The
+manual [RK3588 + RK1828 evidence record](rk1828-rknn3-deployment.md) covers
+completed source export, GRQ, RKNN compilation, aarch64 cross-build, and Ubuntu
+22.04 ABI ceiling checks. Incremental package transfer and the first
+RK3588-to-RK1828 board inference have not started and are not verified. The
+record does not make the guarded project backend available.

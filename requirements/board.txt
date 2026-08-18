@@ -1,2 +1,3 @@
-# Vendor-supplied RK3588 board dependency; obtain it from the official RKLLM release.
-# rkllm-runtime==1.3.0
+# RKNN3 Runtime libraries are supplied outside Python packaging.
+# Their version, paths, and SHA-256 values are pinned in
+# manifests/upstream.yaml and verified by the host bootstrap workflow.

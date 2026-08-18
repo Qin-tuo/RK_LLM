@@ -1,12 +1,12 @@
 .worktrees/
 .venv/
-.toolkit-venv/
+.host-venv/
 __pycache__/
 .pytest_cache/
 *.egg-info/
-third_party/rknn-llm/
+.vendor/
 artifacts/source_models/
-artifacts/converted_models/
+artifacts/work/
 artifacts/packages/
-artifacts/benchmark_runs/
+artifacts/deploy/
 artifacts/logs/

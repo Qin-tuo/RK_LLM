@@ -1,14 +1,19 @@
 # Benchmark Boundary
 
-- Intended environment: x86 for deterministic mock checks, or a prepared RK3588 board for real measurements.
-- Input artifact: a versioned runtime configuration, prompt set, model package, and conversion manifest.
-- Output artifact: JSON Lines records under `artifacts/benchmark_runs/` plus any raw logs under `artifacts/logs/`.
-- Official upstream command family: the RKLLM performance and API-demo programs in `airockchip/rknn-llm` release `1.3.0`.
-
-The current local command only produces meaningful functional records with the mock backend:
+This directory contains no benchmark wrapper yet. The installed Python CLI can
+run the implemented deterministic mock benchmark directly:
 
 ```sh
-rk-llm benchmark --backend mock --config configs/benchmark/smoke.yaml --output artifacts/benchmark_runs/mock.jsonl
+rk-llm benchmark --backend mock \
+  --config configs/benchmark/smoke.yaml \
+  --output artifacts/logs/mock-benchmark.jsonl
 ```
 
-Mock records are not board-performance evidence. See [the benchmark guide](../../docs/benchmark.md) before implementing or publishing a real run.
+That command verifies orchestration and JSON Lines persistence only. It is not
+RK3588 latency, RK1828 throughput, or hardware-inference evidence.
+
+A future board benchmark wrapper must wait for the Native protocol, real runner,
+immutable package workflow, and opt-in inference smoke test. Raw data and logs
+must remain under ignored artifact storage and identify the exact package,
+board software, thermal conditions, and power mode. See the
+[benchmark status and evidence rules](../../docs/benchmark.md).

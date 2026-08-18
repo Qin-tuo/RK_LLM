@@ -2,30 +2,39 @@
 
 ## Mock smoke run
 
-Use the mock backend to check orchestration and JSON Lines persistence on x86:
+Use the mock backend to verify orchestration and JSON Lines persistence on a
+development host:
 
 ```sh
-rk-llm benchmark --backend mock --config configs/benchmark/smoke.yaml --output artifacts/benchmark_runs/mock.jsonl
+rk-llm benchmark --backend mock \
+  --config configs/benchmark/smoke.yaml \
+  --output artifacts/logs/mock-benchmark.jsonl
 ```
 
-These deterministic records are functional test data. They are not RK3588 latency, throughput, memory, temperature, or NPU measurements and must never be compared as such.
+These deterministic records are functional test data. They are not RK3588
+latency, RK1828 throughput, memory, temperature, power, or NPU measurements.
 
-## Real board conditions
+## Hardware benchmark status
 
-Real results are publishable only after the native adapter and an opt-in inference smoke test pass on RK3588. Record at least:
+No project command can run or benchmark RKNN3 inference yet. The backend remains
+guarded while the Native protocol plan is pending, and the native runner is an
+unavailable stub. The repository therefore does not advertise a board benchmark
+command or a hardware-success result at this milestone.
 
-- source model revision, `.rkllm` checksum, conversion options, and prompt-set revision;
-- toolkit and runtime versions plus board image, kernel, NPU driver, and firmware;
-- board model, power mode, cooling, ambient conditions, and relevant clock policy;
-- sampling configuration, context length, input/output token counts, warmup count, and measured iterations;
-- initialization latency, time to first token, decode duration, tokens per second, and termination reason;
-- available memory, CPU, temperature, and NPU readings, with unavailable sensors left explicitly unavailable;
+After the Native protocol, real runner, package workflow, and opt-in inference
+test are implemented, a hardware benchmark must record at least:
+
+- package manifest identity and every payload SHA-256;
+- source-model, Toolkit, Model Zoo, and Runtime revisions;
+- board image, kernel, driver, firmware, transport service, and power mode;
+- cooling, ambient conditions, context length, prompt-set revision, sampling,
+  warmup count, and measured iterations;
+- initialization latency, time to first token, decode duration, tokens per
+  second, input/output token counts, and termination reason;
+- memory, CPU, temperature, and NPU readings, with unavailable readings marked
+  unavailable rather than fabricated;
 - raw logs, UTC timestamps, failure records, and the exact command used.
 
-The intended board command remains explicit:
-
-```sh
-rk-llm benchmark --backend rkllm --config configs/benchmark/board.yaml --output artifacts/benchmark_runs/rk3588.jsonl
-```
-
-`configs/benchmark/board.yaml` does not exist at this skeleton milestone. Add it together with real hardware tests after the native adapter works; do not reinterpret the mock smoke configuration as a board run.
+Mock records and later board records must remain clearly separated. Hardware
+results belong in ignored artifacts and may be summarized only with their full
+environment and package identity.
