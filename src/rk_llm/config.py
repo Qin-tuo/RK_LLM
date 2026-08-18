@@ -12,7 +12,7 @@ from rk_llm.errors import ConfigurationError
 class RuntimeConfig:
     backend: str
     target: str
-    model_path: Path | None
+    package_path: Path | None
     max_new_tokens: int
     temperature: float
     top_p: float
@@ -20,8 +20,8 @@ class RuntimeConfig:
     repeat_penalty: float
 
     def __post_init__(self) -> None:
-        if not isinstance(self.backend, str) or self.backend not in ("mock", "rkllm"):
-            raise ValueError("backend must be mock or rkllm")
+        if not isinstance(self.backend, str) or self.backend not in ("mock", "rknn3"):
+            raise ValueError("backend must be mock or rknn3")
         if not isinstance(self.target, str) or self.target not in ("host", "rk3588"):
             raise ValueError("target must be host or rk3588")
         expected_target = "host" if self.backend == "mock" else "rk3588"
@@ -72,13 +72,17 @@ def _number_value(data: dict[str, Any], field: str, default: float) -> float:
 
 def _runtime_from_mapping(data: dict[str, Any], base_dir: Path) -> RuntimeConfig:
     backend = _string_value(data, "backend", "mock")
-    if backend not in {"mock", "rkllm"}:
-        raise ValueError("backend must be mock or rkllm")
+    if backend not in {"mock", "rknn3"}:
+        raise ValueError("backend must be mock or rknn3")
+    raw_package = data.get("package_path")
+    if raw_package is not None and (
+        not isinstance(raw_package, str) or not raw_package.strip()
+    ):
+        raise ValueError("package_path must be a non-empty string or null")
+    package_path = (base_dir / raw_package).resolve() if raw_package is not None else None
+    if backend == "rknn3" and package_path is None:
+        raise ValueError("package_path is required for rknn3")
     target = _string_value(data, "target", "host")
-    raw_model = data.get("model_path")
-    if raw_model is not None and (not isinstance(raw_model, str) or not raw_model.strip()):
-        raise ValueError("model_path must be a non-empty string or null")
-    model_path = (base_dir / raw_model).resolve() if raw_model is not None else None
     max_new_tokens = _integer_value(data, "max_new_tokens", 128)
     temperature = _number_value(data, "temperature", 0.8)
     top_p = _number_value(data, "top_p", 0.9)
@@ -94,10 +98,8 @@ def _runtime_from_mapping(data: dict[str, Any], base_dir: Path) -> RuntimeConfig
         raise ValueError("top_k must be positive")
     if repeat_penalty <= 0:
         raise ValueError("repeat_penalty must be positive")
-    if backend == "rkllm" and model_path is None:
-        raise ValueError("model_path is required for rkllm")
     return RuntimeConfig(
-        backend, target, model_path, max_new_tokens, temperature, top_p, top_k, repeat_penalty
+        backend, target, package_path, max_new_tokens, temperature, top_p, top_k, repeat_penalty
     )
 
 
