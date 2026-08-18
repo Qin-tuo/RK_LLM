@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "package_id",
+    "created_at",
+    "model",
+    "toolchain",
+    "target",
+    "build",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "package_id": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "model": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "repository", "revision"],
+      "properties": {
+        "id": {
+          "const": "qwen2_5_0_5b"
+        },
+        "repository": {
+          "const": "Qwen/Qwen2.5-0.5B-Instruct"
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_commit",
+        "toolkit",
+        "model_zoo",
+        "runtime_version",
+        "firmware_version",
+        "builder"
+      ],
+      "properties": {
+        "project_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "toolkit": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["release", "revision"],
+          "properties": {
+            "release": {
+              "const": "V1.0.4"
+            },
+            "revision": {
+              "const": "cf292045d77c9ad0377b9fb326f216967475071e"
+            }
+          }
+        },
+        "model_zoo": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["release", "revision"],
+          "properties": {
+            "release": {
+              "const": "V1.0.4"
+            },
+            "revision": {
+              "const": "f63048265b49bd2c6236790087287bed6c6b76fe"
+            }
+          }
+        },
+        "runtime_version": {
+          "const": "1.0.4"
+        },
+        "firmware_version": {
+          "const": "1.0.4"
+        },
+        "builder": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["image", "compiler"],
+          "properties": {
+            "image": {
+              "const": "ubuntu:22.04"
+            },
+            "compiler": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "host_soc",
+        "accelerator",
+        "architecture",
+        "glibc_max",
+        "glibcxx_max"
+      ],
+      "properties": {
+        "host_soc": {
+          "const": "rk3588"
+        },
+        "accelerator": {
+          "const": "rk1828"
+        },
+        "architecture": {
+          "const": "aarch64"
+        },
+        "glibc_max": {
+          "const": "2.35"
+        },
+        "glibcxx_max": {
+          "const": "3.4.30"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["export_args", "rknn_args", "cmake_args"],
+      "properties": {
+        "export_args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rknn_args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "cmake_args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "size", "sha256", "elf"],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "elf": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["glibc", "glibcxx"],
+                "properties": {
+                  "glibc": {
+                    "type": ["string", "null"]
+                  },
+                  "glibcxx": {
+                    "type": ["string", "null"]
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

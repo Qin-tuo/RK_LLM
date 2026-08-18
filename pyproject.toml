@@ -7,7 +7,7 @@ name = "rk-llm"
 version = "0.1.0"
 description = "Incremental pure-text RKLLM deployment project"
 requires-python = ">=3.10,<3.13"
-dependencies = ["PyYAML>=6.0,<7"]
+dependencies = ["PyYAML>=6.0,<7", "jsonschema>=4.23,<5"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<9"]
