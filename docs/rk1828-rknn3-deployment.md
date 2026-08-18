@@ -6,8 +6,10 @@
 > 状态日期：2026-08-18
 >
 > 当前检查点：RKNN3 Toolkit 1.0.4、Model Zoo 依赖和 RTX 5070 CUDA 环境均已验证；
-> Qwen2.5-0.5B 的 GRQ 量化及 ONNX/配置/Tokenizer/Embedding 导出已完成，下一步是
-> 使用 `--platform rk1820` 编译 RKNN3 模型。端侧推理尚未开始。
+> Qwen2.5-0.5B 的 GRQ 量化、ONNX/配置/Tokenizer/Embedding 导出、RKNN3 模型编译和
+> RK3588 ARM64 C++ Demo 交叉编译均已完成。Demo 已在 Ubuntu 22.04 Docker 环境重新
+> 编译，并验证所有部署 ELF 均兼容端侧 glibc 2.35。下一步是增量传输新程序和动态库，
+> 然后使用 RK1828 执行首次端侧推理。
 
 ## 1. 整体链路
 
@@ -65,7 +67,7 @@ RK1828。RK1828 负责实际的 NPU 推理，但不运行宿主机上的 Python 
 | 模型导出 | Qwen 原始模型 | `export_llm.py --quant` 导出并执行 GRQ 预量化 | ONNX、Config、Tokenizer、Embed |
 | RKNN 编译 | ONNX 和 Config | RKNN3 Toolkit 按 W4A16 编译 | `.rknn` 和 `.weight` |
 | Demo 编译 | Model Zoo C++ 源码 | 为 RK3588 交叉编译 ARM64 程序 | `rknn_qwen2_5_demo` |
-| 端侧部署 | Demo 和四个模型文件 | 复制到 RK3588 的 `/userdata` | 可运行的完整部署包 |
+| 端侧部署 | Demo 和四个模型文件 | 复制到 RK3588 的 `/home/ubuntu/userdata` | 可运行的完整部署包 |
 | 硬件推理 | Prompt | Runtime 经 PCIe 调用 RK1828 | 持续生成的文本 token |
 | 项目接入 | 已验证的官方 Demo | 将真实推理链路接入 `RK_LLM` | RK1828 硬件后端 |
 
@@ -443,38 +445,289 @@ ls -lh ../model/llm/Qwen2.5-0.5B-Instruct.{rknn,weight,tokenizer.gguf,embed.bin}
 | `.tokenizer.gguf` | 文本与 token 之间的转换规则 |
 | `.embed.bin` | Token embedding 权重 |
 
+### 10.2 本次 RKNN3 编译结果
+
+本次编译于 2026-08-18 10:50 完成。日志末尾包含以下成功标志：
+
+```text
+I rknn building done.
+I RKNN: Stage code generation completed successfully
+I RKNN: === RKNN Compiler All stages completed successfully ===
+```
+
+最终部署文件如下：
+
+| 文件 | 字节数 | 约合大小 |
+| --- | ---: | ---: |
+| `Qwen2.5-0.5B-Instruct.rknn` | 17,939,072 | 17.1 MiB |
+| `Qwen2.5-0.5B-Instruct.weight` | 333,308,416 | 317.9 MiB |
+| `Qwen2.5-0.5B-Instruct.tokenizer.gguf` | 5,931,031 | 5.7 MiB |
+| `Qwen2.5-0.5B-Instruct.embed.bin` | 272,269,312 | 259.7 MiB |
+
+除检查日志外，还应重新加载生成的模型，排除仅留下不完整输出文件的情况：
+
+```bash
+source ~/rk1828-work/.venv/bin/activate
+
+python - <<'PY'
+from rknn.api import RKNN
+
+model_dir = (
+    "/home/barry/rk1828-work/rknn3-model-zoo/"
+    "examples/Qwen2_5/model/llm"
+)
+rknn = RKNN(verbose=False)
+ret = rknn.load_rknn(
+    f"{model_dir}/Qwen2.5-0.5B-Instruct.rknn",
+    f"{model_dir}/Qwen2.5-0.5B-Instruct.weight",
+)
+print(f"load_rknn return code: {ret}")
+rknn.release()
+raise SystemExit(ret)
+PY
+```
+
+本次实测返回：
+
+```text
+load_rknn return code: 0
+```
+
 ## 11. 交叉编译 RK3588 ARM64 Demo
+
+### 11.1 补齐 RKNN3 Runtime 开发文件
+
+公开 Model Zoo 仓库的 `3rdparty/rknpu3` 目录默认只有一个提示联系 Rockchip 的
+`README.md`，不包含 C++ Demo 构建所需的头文件和动态库。直接运行构建脚本会出现：
+
+```text
+fatal error: rknn3_api.h: No such file or directory
+No rule to make target '.../3rdparty/rknpu3/Linux/aarch64/librknn3_api.so'
+```
+
+当前机器保存的完整 RK1820/RK1828 SDK 已包含 Model Zoo 配套文件。归档文件扩展名虽然是
+`.tar.gz`，实际压缩格式是 bzip2，因此应使用 `tar -xjf`：
+
+```bash
+SDK_ARCHIVE='/media/barry/Qin专属备用盘/Linux/RK1820/RK1820_RK1828/RELEASE_V1.0.5b10/RK1820_1828_RELEASE_V1.0.5B10.tar.gz'
+
+file "$SDK_ARCHIVE"
+tar -xjf "$SDK_ARCHIVE" \
+  --strip-components=3 \
+  -C ~/rk1828-work/rknn3-model-zoo \
+  rel_182x/rknn/rknn3-model-zoo/3rdparty/rknpu3/include \
+  rel_182x/rknn/rknn3-model-zoo/3rdparty/rknpu3/Linux/aarch64
+```
+
+只需恢复以下构建依赖，不要解压或覆盖其他 Model Zoo 源码：
+
+```text
+3rdparty/rknpu3/include/rknn3_api.h
+3rdparty/rknpu3/include/float16.h
+3rdparty/rknpu3/Linux/aarch64/librknn3_api.so
+3rdparty/rknpu3/Linux/aarch64/librknn3_api_rkcp.so
+3rdparty/rknpu3/Linux/aarch64/librknn3_api_native.so
+```
+
+虽然这些文件取自 V1.0.5b10 完整 SDK，实际用于 RK3588 Host 的两个库与本机保存的
+V1.0.4 M.2 安装包内容完全相同。实测 SHA-256 如下：
+
+```text
+113ec97719e04f82e51fcb8badeb18461070ac55ca9a5da87f887f3110b4fcbe  librknn3_api.so
+5ea77749f44be1f0c2ad0347242d4b431d3907d03eac11d265496ddd80cfd210  librknn3_api_rkcp.so
+```
+
+因此本次补齐开发文件没有升级或覆盖 RK3588 上已经安装的 1.0.4 Runtime、传输服务或
+RK1828 固件。
+
+### 11.2 为什么不能直接在 Ubuntu 24.04 上构建
+
+x86 宿主机是 Ubuntu 24.04，系统提供的 ARM64 交叉 sysroot 为 glibc 2.39。直接执行：
 
 ```bash
 cd ~/rk1828-work/rknn3-model-zoo
 
 export GCC_COMPILER=/usr/bin/aarch64-linux-gnu
 ./build-linux.sh -t rk3588 -a aarch64 -d Qwen2_5
-
-DEMO_DIR=install/rk3588_linux_aarch64/rknn_Qwen2_5_demo
-file "$DEMO_DIR/rknn_qwen2_5_demo"
 ```
 
-`file` 输出应包含 `ARM aarch64`。
-
-将模型文件放入 Demo 包：
+虽然构建可以成功，但生成的程序引用了端侧 Ubuntu 22.04 / glibc 2.35 不提供的符号：
 
 ```bash
-MODEL_OUT=examples/Qwen2_5/model/llm
 DEMO_DIR=install/rk3588_linux_aarch64/rknn_Qwen2_5_demo
 
-mkdir -p "$DEMO_DIR/model"
-cp "$MODEL_OUT"/Qwen2.5-0.5B-Instruct.{rknn,weight,tokenizer.gguf,embed.bin} \
-  "$DEMO_DIR/model/"
+aarch64-linux-gnu-readelf --dyn-syms --wide \
+  "$DEMO_DIR/rknn_qwen2_5_demo" | \
+  grep GLIBC_2.38
+```
+
+本次 Ubuntu 24.04 构建的实际输出为：
+
+```text
+__isoc23_strtoul@GLIBC_2.38
+```
+
+该引用来自 `main.cc` 中的 `strtoul()`，在新 glibc 头文件下会解析为 ISO C23 版本。
+这不是 RKNN3 模型或 Runtime 错误，而是应用程序构建基线高于端侧运行基线。
+
+不要升级或手工替换端侧 glibc。正确做法是在 Ubuntu 22.04 / glibc 2.35 环境重新构建
+应用程序。
+
+### 11.3 使用 Ubuntu 22.04 Docker 重新构建
+
+先记录四个模型文件哈希并保留 Ubuntu 24.04 的 CMake 构建目录：
+
+```bash
+cd ~/rk1828-work/rknn3-model-zoo
+
+DEMO_DIR=install/rk3588_linux_aarch64/rknn_Qwen2_5_demo
+sha256sum \
+  "$DEMO_DIR/model/Qwen2.5-0.5B-Instruct.rknn" \
+  "$DEMO_DIR/model/Qwen2.5-0.5B-Instruct.weight" \
+  "$DEMO_DIR/model/Qwen2.5-0.5B-Instruct.tokenizer.gguf" \
+  "$DEMO_DIR/model/Qwen2.5-0.5B-Instruct.embed.bin" \
+  > /tmp/qwen2_5-model-sha256.before
+
+BUILD_BACKUP_TAG=$(date +%Y%m%d-%H%M%S)
+BUILD_DIR=build/build_rknn_Qwen2_5_demo_rk3588_linux_aarch64_Release
+
+if [ -d "$BUILD_DIR" ]; then
+  mv "$BUILD_DIR" "${BUILD_DIR}.ubuntu24-${BUILD_BACKUP_TAG}"
+fi
+```
+
+使用一次性 Ubuntu 22.04 容器安装 GCC 11 ARM64 交叉工具链并完整重编译：
+
+```bash
+docker run --rm \
+  -e HOST_UID="$(id -u)" \
+  -e HOST_GID="$(id -g)" \
+  -v "$PWD:$PWD" \
+  -w "$PWD" \
+  ubuntu:22.04 \
+  bash -lc '
+    set -e
+    apt-get update
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      cmake make gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+    export GCC_COMPILER=/usr/bin/aarch64-linux-gnu
+    ./build-linux.sh -t rk3588 -a aarch64 -d Qwen2_5
+    chown -R "${HOST_UID}:${HOST_GID}" \
+      build/build_rknn_Qwen2_5_demo_rk3588_linux_aarch64_Release \
+      install/rk3588_linux_aarch64/rknn_Qwen2_5_demo
+  '
+```
+
+如果 Docker daemon 提示权限不足，将 `docker run` 改为 `sudo docker run`。传入
+`HOST_UID` 和 `HOST_GID` 并在构建结束后执行 `chown`，可以避免挂载目录中的新文件归
+`root` 所有。
+
+本次容器实测使用：
+
+```text
+Ubuntu 22.04
+GCC/G++ 11.4.0 for aarch64-linux-gnu
+libc6-dev-arm64-cross 2.35
+```
+
+原 Ubuntu 24.04 构建目录已保留为：
+
+```text
+build/build_rknn_Qwen2_5_demo_rk3588_linux_aarch64_Release.ubuntu24-20260818-120317
+```
+
+构建日志中的 `find: 'tested_models': No such file or directory` 只是缺少可选目录的非致命
+提示，不影响 `Qwen2_5` Demo 构建。
+
+### 11.4 检查 GLIBC 兼容性和部署包
+
+先确认程序架构，并执行用户态兼容性的快速检查：
+
+```bash
+DEMO_DIR=install/rk3588_linux_aarch64/rknn_Qwen2_5_demo
+
+file "$DEMO_DIR/rknn_qwen2_5_demo"
+
+aarch64-linux-gnu-readelf --dyn-syms --wide \
+  "$DEMO_DIR/rknn_qwen2_5_demo" | \
+  grep GLIBC_2.38
+```
+
+`file` 输出应包含 `ARM aarch64`，最后一条命令应当没有输出。
+
+不要只检查 `GLIBC_2.38`。以下检查会扫描主程序和部署包内所有动态库，并在发现任何高于
+glibc 2.35 的需求时退出：
+
+```bash
+for ELF_FILE in \
+  "$DEMO_DIR/rknn_qwen2_5_demo" \
+  "$DEMO_DIR"/lib/*.so
+do
+  printf '%s: ' "$ELF_FILE"
+  aarch64-linux-gnu-readelf --version-info "$ELF_FILE" | \
+    grep -o 'GLIBC_[0-9][0-9.]*' | sort -Vu | paste -sd, -
+
+  if aarch64-linux-gnu-readelf --version-info "$ELF_FILE" | \
+      grep -Eq 'GLIBC_2\.(3[6-9]|[4-9][0-9])|GLIBC_[3-9]\.'
+  then
+    echo "不兼容 glibc 2.35: $ELF_FILE" >&2
+    exit 1
+  fi
+done
+```
+
+本次实测结果：
+
+| ELF 文件 | 最高 GLIBC 需求 |
+| --- | --- |
+| `rknn_qwen2_5_demo` | `GLIBC_2.34` |
+| `lib/librga.so` | `GLIBC_2.17` |
+| `lib/librknn3_api.so` | `GLIBC_2.17` |
+| `lib/librknn3_api_rkcp.so` | `GLIBC_2.17` |
+
+新程序信息：
+
+```text
+大小：794,896 bytes
+SHA-256：3d07e2480c79ec2636aa8be02fd44c5898ce3878436f1360cf217491c7216c15
+```
+
+`make install` 会自动复制可执行文件、Runtime 动态库和四个模型文件。确认模型副本未被
+重编译过程改变：
+
+```bash
+sha256sum -c /tmp/qwen2_5-model-sha256.before
+```
+
+四项都应显示 `OK`。最后检查部署包：
+
+```bash
+find "$DEMO_DIR" -maxdepth 2 -type f -printf '%s %p\n' | sort
+du -sh "$DEMO_DIR"
+```
+
+本次生成的完整部署包约为 `610M`，包含：
+
+```text
+rknn_qwen2_5_demo
+lib/librknn3_api.so
+lib/librknn3_api_rkcp.so
+lib/librga.so
+model/Qwen2.5-0.5B-Instruct.rknn
+model/Qwen2.5-0.5B-Instruct.weight
+model/Qwen2.5-0.5B-Instruct.tokenizer.gguf
+model/Qwen2.5-0.5B-Instruct.embed.bin
 ```
 
 ## 12. 传输到 RK3588
+
+### 12.1 首次传输完整部署包
 
 先确认网络和 SSH：
 
 ```bash
 ping -c 3 <RK3588_IP>
-ssh ubuntu@<RK3588_IP> 'uname -m && df -h /userdata'
+ssh ubuntu@<RK3588_IP> 'uname -m && df -h /home/ubuntu/userdata'
 ```
 
 传输完整 Demo：
@@ -483,14 +736,35 @@ ssh ubuntu@<RK3588_IP> 'uname -m && df -h /userdata'
 cd ~/rk1828-work/rknn3-model-zoo
 
 scp -r install/rk3588_linux_aarch64/rknn_Qwen2_5_demo \
-  ubuntu@<RK3588_IP>:/userdata/
+  ubuntu@<RK3588_IP>:/home/ubuntu/userdata/
+```
+
+### 12.2 重编译后只传输程序和库
+
+如果四个模型文件已经传输到端侧，Ubuntu 22.04 重编译后不需要再次传输约 600 MB 的模型
+数据，只更新程序和动态库：
+
+```bash
+cd ~/rk1828-work/rknn3-model-zoo
+
+DEMO_DIR=install/rk3588_linux_aarch64/rknn_Qwen2_5_demo
+RK3588_HOST=ubuntu@<RK3588_IP>
+REMOTE_DIR=/home/ubuntu/userdata/rknn_Qwen2_5_demo
+
+ssh "$RK3588_HOST" "mkdir -p '$REMOTE_DIR/lib'"
+
+scp "$DEMO_DIR/rknn_qwen2_5_demo" \
+  "${RK3588_HOST}:${REMOTE_DIR}/"
+
+scp "$DEMO_DIR"/lib/*.so \
+  "${RK3588_HOST}:${REMOTE_DIR}/lib/"
 ```
 
 ## 13. 在 RK3588 上运行
 
 ```bash
 ssh ubuntu@<RK3588_IP>
-cd /userdata/rknn_Qwen2_5_demo
+cd /home/ubuntu/userdata/rknn_Qwen2_5_demo
 
 export LD_LIBRARY_PATH="$PWD/lib:$LD_LIBRARY_PATH"
 sudo rknn-smi info -l
@@ -531,18 +805,18 @@ sudo rknn-smi info -w
 | Qwen2.5-0.5B 下载 | 已完成，`model.safetensors` 约 988 MB |
 | Model Zoo 额外依赖 | 已完成，AutoGPTQ 使用无可选 CUDA 扩展模式 |
 | GRQ 量化及 ONNX/配置导出 | 已完成，实测约 2 分 37 秒 |
-| RKNN3 编译 | 待执行，目标参数为 `--platform rk1820` |
-| ARM64 Demo 交叉编译 | 未开始 |
+| RKNN3 编译 | 已完成，`--platform rk1820`，模型重新加载返回 `0` |
+| ARM64 Demo 交叉编译 | 已完成，Ubuntu 22.04 构建，最高依赖 `GLIBC_2.34` |
 | 端侧推理 | 未开始 |
 | 接入 `RK_LLM` | 官方 Demo 验证后进行 |
 
-当前最近的一步是进入第 10 节，将已经生成的 ONNX 和配置编译为 RKNN3 模型。开始前
-可以先确认输入文件和剩余磁盘空间：
+当前最近的一步是按照第 12.2 节把新程序和动态库增量复制到 RK3588，然后按照第 13 节
+运行 Demo 并同时观察 RK1828 状态。传输前检查部署包和端侧剩余空间：
 
 ```bash
-cd ~/rk1828-work/rknn3-model-zoo/examples/Qwen2_5/python
-ls -lh ../model/llm/Qwen2.5-0.5B-Instruct.{onnx,config.pkl,tokenizer.gguf,embed.bin}
-df -h /
+cd ~/rk1828-work/rknn3-model-zoo
+du -sh install/rk3588_linux_aarch64/rknn_Qwen2_5_demo
+ssh ubuntu@<RK3588_IP> 'uname -m && df -h /home/ubuntu/userdata && sudo rknn-smi info -l'
 ```
 
 ## 15. 注意事项
@@ -553,6 +827,10 @@ df -h /
 4. 不要使用脚本的默认 3B 参数；首轮验证固定使用本地 0.5B 模型。
 5. 模型转换完成不代表硬件推理成功，必须运行 ARM64 Demo 并观察 `rknn-smi`。
 6. 官方 Demo 完整跑通后，再把推理链路接入当前 `RK_LLM` 项目。
+7. `librknn3_api`、端侧传输服务和 RK1828 固件必须保持兼容版本；替换构建依赖前应先
+   与端侧安装版本或官方安装包核对哈希。
+8. 不要为运行宿主机生成的程序而升级端侧 glibc；应用程序必须在不高于目标端侧的 glibc
+   基线上构建，并在传输前检查全部部署 ELF 的符号版本。
 
 ## 16. 官方参考
 
