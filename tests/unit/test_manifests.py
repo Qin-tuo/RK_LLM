@@ -26,6 +26,20 @@ def _model_data() -> dict[str, object]:
     }
 
 
+def _with_demo(data: dict[str, object]) -> dict[str, object]:
+    data.update(
+        {
+            "demo_root": "model-zoo/install/rknn_Demo",
+            "demo_name": "rknn_Demo",
+            "demo_files": [
+                {"path": "demo", "size": 1, "sha256": VALID_DIGEST},
+                {"path": "lib/runtime.so", "size": 1, "sha256": VALID_DIGEST},
+            ],
+        }
+    )
+    return data
+
+
 def _upstream_data() -> dict[str, object]:
     return {
         "schema_version": 1,
@@ -197,6 +211,101 @@ def test_repository_manifests_pin_verified_versions() -> None:
             "94bbef9ec8eb5eee08473105af3d88bcce062283db763adba15804d03b7e40f8",
         ),
     ]
+
+
+def test_repository_qwen3_manifest_pins_vendor_demo_inputs() -> None:
+    model = load_model_manifest(Path("configs/models/qwen3_4b.yaml"))
+
+    assert model.model_id == "qwen3_4b"
+    assert model.repository == "Qwen/Qwen3-4B"
+    assert model.revision == "1cfa9a7208912126459214e8b04321603b3df60c"
+    assert model.platform == "rk1820"
+    assert model.source_root == Path("models/Qwen3-4B")
+    assert model.generated_root == Path(
+        "rknn3-model-zoo/examples/Qwen3/model/llm"
+    )
+    assert model.demo_root == Path(
+        "rknn3-model-zoo/install/rk3588_linux_aarch64/rknn_Qwen3_demo"
+    )
+    assert model.demo_name == "rknn_Qwen3_demo"
+    assert len(model.source_files) == 12
+    assert len(model.generated_files) == 6
+    assert len(model.demo_files) == 9
+    assert model.source_files[5].path == Path(
+        "model-00001-of-00003.safetensors"
+    )
+    assert (
+        model.source_files[5].sha256
+        == "328a91d3122359d5547f9d79521205bc0a46e1f79a792dfe650e99fc2d651223"
+    )
+    assert model.demo_files[1].path == Path("rknn_qwen3_demo")
+    assert (
+        model.demo_files[1].sha256
+        == "8418947bd24b948c9778fd3f87f439fb046dfa90c19bf24aa09b32118438fb56"
+    )
+
+
+@pytest.mark.parametrize("missing", ["demo_root", "demo_name", "demo_files"])
+def test_model_manifest_requires_complete_demo_declaration(
+    tmp_path: Path, missing: str
+) -> None:
+    data = _with_demo(_model_data())
+    data.pop(missing)
+    path = _write_yaml(tmp_path / "bad.yaml", data)
+
+    with pytest.raises(ValueError, match="demo_root, demo_name, and demo_files"):
+        load_model_manifest(path)
+
+
+@pytest.mark.parametrize("demo_name", ["../demo", "a/b", ".", "..", ""])
+def test_model_manifest_rejects_unsafe_demo_name(
+    tmp_path: Path, demo_name: str
+) -> None:
+    data = _with_demo(_model_data())
+    data["demo_name"] = demo_name
+    path = _write_yaml(tmp_path / "bad.yaml", data)
+
+    with pytest.raises(ValueError, match="demo_name must be a safe path component"):
+        load_model_manifest(path)
+
+
+def test_model_manifest_rejects_empty_demo_file_list(tmp_path: Path) -> None:
+    data = _with_demo(_model_data())
+    data["demo_files"] = []
+    path = _write_yaml(tmp_path / "bad.yaml", data)
+
+    with pytest.raises(ValueError, match="demo_files must not be empty"):
+        load_model_manifest(path)
+
+
+@pytest.mark.parametrize("field", ["source_files", "generated_files", "demo_files"])
+def test_model_manifest_rejects_duplicate_file_paths(
+    tmp_path: Path, field: str
+) -> None:
+    data = _with_demo(_model_data())
+    data[field] = [
+        {"path": "same.bin", "size": 1, "sha256": VALID_DIGEST},
+        {"path": "same.bin", "size": 1, "sha256": "c" * 64},
+    ]
+    path = _write_yaml(tmp_path / "bad.yaml", data)
+
+    with pytest.raises(ValueError, match=f"{field} contains duplicate path"):
+        load_model_manifest(path)
+
+
+@pytest.mark.parametrize("field", ["source_files", "generated_files", "demo_files"])
+def test_model_manifest_rejects_ancestor_overlapping_file_paths(
+    tmp_path: Path, field: str
+) -> None:
+    data = _with_demo(_model_data())
+    data[field] = [
+        {"path": "lib", "size": 1, "sha256": VALID_DIGEST},
+        {"path": "lib/runtime.so", "size": 1, "sha256": "c" * 64},
+    ]
+    path = _write_yaml(tmp_path / "bad.yaml", data)
+
+    with pytest.raises(ValueError, match=f"{field} contains overlapping paths"):
+        load_model_manifest(path)
 
 
 def test_manifest_rejects_non_sha256_digest(tmp_path: Path) -> None:

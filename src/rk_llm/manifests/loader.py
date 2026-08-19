@@ -60,6 +60,9 @@ class ModelManifest:
     generated_root: Path
     source_files: tuple[SizedFilePin, ...]
     generated_files: tuple[SizedFilePin, ...]
+    demo_root: Path | None = None
+    demo_name: str | None = None
+    demo_files: tuple[SizedFilePin, ...] = ()
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -112,6 +115,20 @@ def _relative_path(value: object, field: str) -> Path:
     return path
 
 
+def _safe_component(value: object, field: str) -> str:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value in {".", ".."}
+        or "/" in value
+        or "\\" in value
+        or "\0" in value
+        or Path(value).parts != (value,)
+    ):
+        raise ValueError(f"{field} must be a safe path component")
+    return value
+
+
 def _digest(value: object, field: str) -> str:
     if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
         raise ValueError(f"{field} must be a lowercase SHA-256 digest")
@@ -145,6 +162,21 @@ def _sized_file_pin(value: object, field: str) -> SizedFilePin:
         size=size,
         sha256=_digest(data.get("sha256"), f"{field}.sha256"),
     )
+
+
+def _sized_file_pins(values: list[object], field: str) -> tuple[SizedFilePin, ...]:
+    pins = tuple(
+        _sized_file_pin(value, f"{field}[{index}]")
+        for index, value in enumerate(values)
+    )
+    paths: list[Path] = []
+    for pin in pins:
+        if pin.path in paths:
+            raise ValueError(f"{field} contains duplicate path: {pin.path}")
+        if any(pin.path in path.parents or path in pin.path.parents for path in paths):
+            raise ValueError(f"{field} contains overlapping paths: {pin.path}")
+        paths.append(pin.path)
+    return pins
 
 
 def load_upstream_manifest(path: Path) -> UpstreamManifest:
@@ -189,6 +221,22 @@ def load_model_manifest(path: Path) -> ModelManifest:
 
     source_files = _sequence(data.get("source_files"), "source_files")
     generated_files = _sequence(data.get("generated_files"), "generated_files")
+    demo_fields = ("demo_root", "demo_name", "demo_files")
+    declared_demo_fields = tuple(field in data for field in demo_fields)
+    if any(declared_demo_fields) and not all(declared_demo_fields):
+        raise ValueError("demo_root, demo_name, and demo_files must be declared together")
+
+    demo_root: Path | None = None
+    demo_name: str | None = None
+    demo_files: tuple[SizedFilePin, ...] = ()
+    if all(declared_demo_fields):
+        demo_root = _relative_path(data.get("demo_root"), "demo_root")
+        demo_name = _safe_component(data.get("demo_name"), "demo_name")
+        raw_demo_files = _sequence(data.get("demo_files"), "demo_files")
+        if not raw_demo_files:
+            raise ValueError("demo_files must not be empty")
+        demo_files = _sized_file_pins(raw_demo_files, "demo_files")
+
     return ModelManifest(
         model_id=_required_string(data, "model_id", "model_id"),
         repository=_required_string(data, "repository", "repository"),
@@ -196,12 +244,9 @@ def load_model_manifest(path: Path) -> ModelManifest:
         platform=_required_string(data, "platform", "platform"),
         source_root=_relative_path(data.get("source_root"), "source_root"),
         generated_root=_relative_path(data.get("generated_root"), "generated_root"),
-        source_files=tuple(
-            _sized_file_pin(value, f"source_files[{index}]")
-            for index, value in enumerate(source_files)
-        ),
-        generated_files=tuple(
-            _sized_file_pin(value, f"generated_files[{index}]")
-            for index, value in enumerate(generated_files)
-        ),
+        source_files=_sized_file_pins(source_files, "source_files"),
+        generated_files=_sized_file_pins(generated_files, "generated_files"),
+        demo_root=demo_root,
+        demo_name=demo_name,
+        demo_files=demo_files,
     )
