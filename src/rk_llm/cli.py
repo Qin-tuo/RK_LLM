@@ -11,7 +11,7 @@ from rk_llm.backends.base import GenerationBackend
 from rk_llm.backends.mock import MockBackend
 from rk_llm.backends.rknn3 import RKNN3Backend
 from rk_llm.config import RuntimeConfig, load_benchmark_config, load_runtime_config
-from rk_llm.errors import ConfigurationError, RKLLMProjectError
+from rk_llm.errors import ConfigurationError, ProjectError
 from rk_llm.generation.service import GenerationService
 from rk_llm.metrics.benchmark import run_benchmark
 from rk_llm.types import GenerationRequest
@@ -137,7 +137,7 @@ def entrypoint() -> None:
     except BrokenPipeError:
         _silence_broken_stdout()
         raise SystemExit(141) from None
-    except (ValueError, OSError, RuntimeError, RKLLMProjectError) as error:
+    except (ValueError, OSError, RuntimeError, ProjectError) as error:
         print(str(error), file=sys.stderr)
         raise SystemExit(2) from error
 

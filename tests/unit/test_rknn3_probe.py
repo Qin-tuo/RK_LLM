@@ -8,7 +8,7 @@ from rk_llm.errors import (
     BackendUnavailableError,
     ConfigurationError,
     NativeRunnerError,
-    RKLLMProjectError,
+    ProjectError,
 )
 from rk_llm.platform.probe import probe_rknn3
 from rk_llm.types import GenerationRequest
@@ -24,10 +24,10 @@ def _write_package(package_path: Path, *, executable: bool = True) -> None:
 
 
 def test_project_errors_share_a_public_base_type() -> None:
-    assert issubclass(ConfigurationError, RKLLMProjectError)
-    assert issubclass(ArtifactError, RKLLMProjectError)
-    assert issubclass(BackendUnavailableError, RKLLMProjectError)
-    assert issubclass(NativeRunnerError, RKLLMProjectError)
+    assert issubclass(ConfigurationError, ProjectError)
+    assert issubclass(ArtifactError, ProjectError)
+    assert issubclass(BackendUnavailableError, ProjectError)
+    assert issubclass(NativeRunnerError, ProjectError)
 
 
 def test_rknn3_probe_reports_all_missing_prerequisites(

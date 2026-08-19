@@ -12,7 +12,7 @@ import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from rk_llm.errors import ArtifactError, ConfigurationError, RKLLMProjectError
+from rk_llm.errors import ArtifactError, ConfigurationError, ProjectError
 from rk_llm.manifests.loader import DigestPin, GitPin, load_upstream_manifest
 
 
@@ -131,7 +131,7 @@ def _sha256(path: Path) -> str:
 
 def _reject_symlink_components(
     path: Path,
-    error_type: type[RKLLMProjectError],
+    error_type: type[ProjectError],
     label: str,
 ) -> None:
     absolute_path = path if path.is_absolute() else Path.cwd() / path
@@ -152,7 +152,7 @@ def _reject_symlink_components(
 
 def _real_directory(
     path: Path,
-    error_type: type[RKLLMProjectError],
+    error_type: type[ProjectError],
     label: str,
 ) -> Path:
     _reject_symlink_components(path, error_type, label)
@@ -326,7 +326,7 @@ def main(argv: list[str] | None = None) -> int:
 def entrypoint() -> None:
     try:
         raise SystemExit(main())
-    except (ValueError, OSError, RKLLMProjectError) as error:
+    except (ValueError, OSError, ProjectError) as error:
         print(str(error), file=sys.stderr)
         raise SystemExit(2) from error
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rk-llm"
 version = "0.1.0"
-description = "Incremental pure-text RKLLM deployment project"
+description = "Incremental pure-text RKNN3 deployment project"
 requires-python = ">=3.10,<3.13"
 dependencies = ["PyYAML>=6.0,<7", "jsonschema>=4.23,<5"]
 

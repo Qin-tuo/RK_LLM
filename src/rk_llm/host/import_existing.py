@@ -12,7 +12,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from rk_llm.errors import ArtifactError, ConfigurationError, RKLLMProjectError
+from rk_llm.errors import ArtifactError, ConfigurationError, ProjectError
 from rk_llm.manifests.loader import (
     ModelManifest,
     SizedFilePin,
@@ -32,7 +32,7 @@ def _identity(details: os.stat_result) -> tuple[int, int]:
 
 def _reject_symlink_components(
     path: Path,
-    error_type: type[RKLLMProjectError],
+    error_type: type[ProjectError],
     label: str,
 ) -> None:
     absolute_path = path if path.is_absolute() else Path.cwd() / path
@@ -55,7 +55,7 @@ def _reject_symlink_components(
 
 def _resolved_path(
     path: Path,
-    error_type: type[RKLLMProjectError],
+    error_type: type[ProjectError],
     label: str,
     *,
     directory: bool = False,
@@ -81,7 +81,7 @@ def _open_child_directory(
     name: str,
     current: Path,
     create: bool,
-    error_type: type[RKLLMProjectError],
+    error_type: type[ProjectError],
     label: str,
 ) -> int:
     try:
@@ -113,7 +113,7 @@ def _open_directory(
     path: Path,
     *,
     create: bool,
-    error_type: type[RKLLMProjectError],
+    error_type: type[ProjectError],
     label: str,
 ) -> int:
     normalized = Path(os.path.normpath(path))
@@ -261,7 +261,7 @@ def _remove_owned_directory(
 
 def _validate_directory_components(
     path: Path,
-    error_type: type[RKLLMProjectError],
+    error_type: type[ProjectError],
     label: str,
 ) -> None:
     normalized = Path(os.path.normpath(path))
@@ -297,7 +297,7 @@ def _open_relative_parent(
     relative: Path,
     *,
     create: bool,
-    error_type: type[RKLLMProjectError],
+    error_type: type[ProjectError],
     label: str,
 ) -> tuple[int, str]:
     if relative.is_absolute() or not relative.parts or ".." in relative.parts:
@@ -328,7 +328,7 @@ def _open_relative_directory(
     relative: Path,
     *,
     create: bool,
-    error_type: type[RKLLMProjectError],
+    error_type: type[ProjectError],
     label: str,
 ) -> int:
     if not relative.parts:
@@ -1307,7 +1307,7 @@ def main(argv: list[str] | None = None) -> int:
 def entrypoint() -> None:
     try:
         raise SystemExit(main())
-    except (ValueError, OSError, RKLLMProjectError) as error:
+    except (ValueError, OSError, ProjectError) as error:
         print(str(error), file=sys.stderr)
         raise SystemExit(2) from error
 

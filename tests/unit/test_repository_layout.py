@@ -19,6 +19,17 @@ def test_rknn3_foundation_has_required_boundaries() -> None:
     assert [path for path in required if not Path(path).is_file()] == []
 
 
+def test_project_metadata_and_python_sources_do_not_use_retired_product_name() -> None:
+    sources = (Path("pyproject.toml"), *Path("src/rk_llm").rglob("*.py"))
+    findings = [
+        str(path)
+        for path in sources
+        if "RKLLM" in path.read_text(encoding="utf-8")
+    ]
+
+    assert findings == []
+
+
 def test_rknn3_runner_name_matches_the_deployment_package_contract() -> None:
     cmake = Path("native/rknn3_qwen_runner/CMakeLists.txt").read_text(
         encoding="utf-8"
