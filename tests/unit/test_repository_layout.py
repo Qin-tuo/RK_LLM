@@ -19,6 +19,17 @@ def test_rknn3_foundation_has_required_boundaries() -> None:
     assert [path for path in required if not Path(path).is_file()] == []
 
 
+def test_rknn3_runner_name_matches_the_deployment_package_contract() -> None:
+    cmake = Path("native/rknn3_qwen_runner/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
+    probe = Path("src/rk_llm/platform/probe.py").read_text(encoding="utf-8")
+
+    assert "add_executable(rknn_qwen_runner src/main.cpp)" in cmake
+    assert 'package_path / "bin/rknn_qwen_runner"' in probe
+    assert "add_executable(rknn3_qwen_runner" not in cmake
+
+
 def test_local_vendor_and_artifact_roots_are_ignored() -> None:
     ignore_patterns = set(
         Path(".gitignore").read_text(encoding="utf-8").splitlines()
