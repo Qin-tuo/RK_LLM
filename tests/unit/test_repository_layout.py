@@ -11,8 +11,10 @@ def test_rknn3_foundation_has_required_boundaries() -> None:
         "src/rk_llm/backends/rknn3.py",
         "src/rk_llm/host/bootstrap.py",
         "src/rk_llm/host/import_existing.py",
+        "src/rk_llm/host/package_vendor_demo.py",
         "tools/host/bootstrap",
         "tools/host/import-existing",
+        "tools/host/package-vendor-demo",
         "artifacts/README.md",
     )
 
@@ -114,7 +116,7 @@ def test_manual_evidence_status_is_scoped_to_completed_steps() -> None:
     ] == []
 
 
-def test_makefile_exposes_only_implemented_host_foundation_targets() -> None:
+def test_makefile_exposes_implemented_host_targets() -> None:
     makefile = Path("Makefile").read_text(encoding="utf-8")
     required_lines = (
         "PROJECT_ROOT := $(abspath .)",
@@ -131,9 +133,12 @@ def test_makefile_exposes_only_implemented_host_foundation_targets() -> None:
         '--runtime-dev-root "$(RKNN3_RUNTIME_DEV_ROOT)"',
         '--seed-workspace "$(WORKSPACE)"',
         '"$(HOST_PYTHON)" -m rk_llm.host.import_existing',
+        '"$(HOST_PYTHON)" -m rk_llm.host.package_vendor_demo',
         '--workspace "$(WORKSPACE)"',
         '--model-manifest "$(PROJECT_ROOT)/configs/models/$(MODEL).yaml"',
         "--mode copy",
+        '--upstream-manifest "$(PROJECT_ROOT)/manifests/upstream.yaml"',
+        "--readelf aarch64-linux-gnu-readelf",
     )
 
     assert all(line in makefile for line in required_lines)
@@ -141,11 +146,11 @@ def test_makefile_exposes_only_implemented_host_foundation_targets() -> None:
     assert ".PHONY:" in makefile
     assert all(
         target in makefile
-        for target in ("host-env", "host-bootstrap", "host-import")
+        for target in ("host-env", "host-bootstrap", "host-import", "host-package")
     )
     assert all(
         f"{target}:" not in makefile
-        for target in ("host-build", "host-runner", "host-package", "deploy")
+        for target in ("host-build", "host-runner", "deploy")
     )
 
 

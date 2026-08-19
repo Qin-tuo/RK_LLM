@@ -5,7 +5,7 @@ MODEL ?= qwen2_5_0_5b
 WORKSPACE ?= /home/barry/rk1828-work
 RKNN3_RUNTIME_DEV_ROOT ?= $(WORKSPACE)/rknn3-model-zoo/3rdparty/rknpu3
 
-.PHONY: install test smoke host-env host-bootstrap host-import
+.PHONY: install test smoke host-env host-bootstrap host-import host-package
 
 install:
 	python3 -m pip install -e ".[dev]"
@@ -33,3 +33,10 @@ host-import: host-env
 		--workspace "$(WORKSPACE)" \
 		--model-manifest "$(PROJECT_ROOT)/configs/models/$(MODEL).yaml" \
 		--mode copy
+
+host-package: host-env
+	"$(HOST_PYTHON)" -m rk_llm.host.package_vendor_demo \
+		--project-root "$(PROJECT_ROOT)" \
+		--model-manifest "$(PROJECT_ROOT)/configs/models/$(MODEL).yaml" \
+		--upstream-manifest "$(PROJECT_ROOT)/manifests/upstream.yaml" \
+		--readelf aarch64-linux-gnu-readelf
