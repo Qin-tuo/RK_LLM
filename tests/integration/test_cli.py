@@ -9,7 +9,7 @@ import pytest
 
 import rk_llm.cli as cli_module
 from rk_llm.cli import entrypoint, main
-from rk_llm.errors import BackendUnavailableError
+from rk_llm.errors import ArtifactError, BackendUnavailableError
 from rk_llm.types import BackendCapabilities, GenerationRequest, TextChunk
 
 
@@ -60,6 +60,65 @@ def test_doctor_labels_mock_backend(capsys: pytest.CaptureFixture[str]) -> None:
     assert payload["name"] == "mock"
     assert payload["available"] is True
     assert payload["is_mock"] is True
+
+
+def test_package_validate_prints_compact_package_identity(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package = tmp_path / "package"
+    manifest = {
+        "package_id": "0123456789abcdef",
+        "model": {"id": "qwen3_4b"},
+        "package_profile": "vendor_demo",
+        "entrypoint": "bin/rknn_qwen3_demo",
+    }
+    monkeypatch.setattr(
+        cli_module,
+        "validate_package",
+        lambda package_path: manifest if package_path == package else None,
+        raising=False,
+    )
+
+    assert main(["package-validate", "--package", str(package)]) == 0
+
+    assert json.loads(capsys.readouterr().out) == {
+        "package_id": "0123456789abcdef",
+        "model_id": "qwen3_4b",
+        "package_profile": "vendor_demo",
+        "entrypoint": "bin/rknn_qwen3_demo",
+    }
+
+
+def test_package_validate_entrypoint_reports_invalid_package_without_traceback(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    package = tmp_path / "invalid"
+
+    def reject_package(package_path: Path) -> dict[str, object]:
+        assert package_path == package
+        raise ArtifactError("invalid test package")
+
+    monkeypatch.setattr(
+        cli_module,
+        "validate_package",
+        reject_package,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["rk-llm", "package-validate", "--package", str(package)],
+    )
+
+    with pytest.raises(SystemExit) as exit_info:
+        entrypoint()
+
+    assert exit_info.value.code == 2
+    assert capsys.readouterr().err == "invalid test package\n"
 
 
 def test_doctor_reports_rknn3_unavailable_without_mock_fallback(

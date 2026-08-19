@@ -7,6 +7,7 @@ import sys
 from dataclasses import asdict, replace
 from pathlib import Path
 
+from rk_llm.artifacts.manifest import validate_package
 from rk_llm.backends.base import GenerationBackend
 from rk_llm.backends.mock import MockBackend
 from rk_llm.backends.rknn3 import RKNN3Backend
@@ -70,6 +71,9 @@ def _parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--backend", choices=("mock", "rknn3"), required=True)
     benchmark.add_argument("--config", type=Path, required=True)
     benchmark.add_argument("--output", type=Path, required=True)
+
+    package_validate = commands.add_parser("package-validate")
+    package_validate.add_argument("--package", type=Path, required=True)
     return parser
 
 
@@ -103,6 +107,24 @@ def main(argv: list[str] | None = None) -> int:
             request, on_chunk=lambda chunk: print(chunk.text, end="", flush=True)
         )
         print()
+        return 0
+
+    if args.command == "package-validate":
+        manifest = validate_package(_deployment_path(args.package))
+        model = manifest["model"]
+        if not isinstance(model, dict):
+            raise ValueError("validated package model must be an object")
+        print(
+            json.dumps(
+                {
+                    "package_id": manifest["package_id"],
+                    "model_id": model["id"],
+                    "package_profile": manifest["package_profile"],
+                    "entrypoint": manifest["entrypoint"],
+                },
+                ensure_ascii=False,
+            )
+        )
         return 0
 
     config = load_benchmark_config(args.config)

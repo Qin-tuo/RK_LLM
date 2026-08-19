@@ -82,6 +82,8 @@ def _valid_manifest(file_path: str = "bin/rknn_qwen_runner") -> dict[str, object
         "schema_version": 1,
         "package_id": "0" * 16,
         "created_at": "2026-08-18T00:00:00Z",
+        "package_profile": "project_runner",
+        "entrypoint": "bin/rknn_qwen_runner",
         "model": {
             "id": "qwen2_5_0_5b",
             "repository": "Qwen/Qwen2.5-0.5B-Instruct",
@@ -129,6 +131,27 @@ def _valid_manifest(file_path: str = "bin/rknn_qwen_runner") -> dict[str, object
     }
 
 
+def _valid_qwen3_manifest() -> dict[str, object]:
+    model = load_model_manifest(Path("configs/models/qwen3_4b.yaml"))
+    manifest = _valid_manifest("bin/rknn_qwen3_demo")
+    manifest["package_profile"] = "vendor_demo"
+    manifest["entrypoint"] = "bin/rknn_qwen3_demo"
+    manifest["model"] = {
+        "id": model.model_id,
+        "repository": model.repository,
+        "revision": model.revision,
+        "source_files": [
+            {
+                "path": pin.path.as_posix(),
+                "size": pin.size,
+                "sha256": pin.sha256,
+            }
+            for pin in model.source_files
+        ],
+    }
+    return manifest
+
+
 def test_package_source_pins_match_model_manifest() -> None:
     model = load_model_manifest(Path("configs/models/qwen2_5_0_5b.yaml"))
 
@@ -159,6 +182,16 @@ def _make_package(tmp_path: Path) -> tuple[Path, dict[str, object]]:
     return package_root, manifest
 
 
+def _make_qwen3_package(tmp_path: Path) -> tuple[Path, dict[str, object]]:
+    package_root = tmp_path / "qwen3-package"
+    runner = package_root / "bin" / "rknn_qwen3_demo"
+    runner.parent.mkdir(parents=True)
+    runner.write_bytes(RUNNER)
+    manifest = _valid_qwen3_manifest()
+    _write_manifest(package_root, manifest)
+    return package_root, manifest
+
+
 def test_package_id_ignores_package_id_and_created_at() -> None:
     manifest = _valid_manifest()
     original_payload = canonical_payload(manifest)
@@ -175,6 +208,50 @@ def test_validate_package_returns_valid_manifest(tmp_path: Path) -> None:
     package_root, manifest = _make_package(tmp_path)
 
     assert validate_package(package_root) == manifest
+
+
+def test_validate_package_accepts_fixed_qwen3_vendor_demo_profile(
+    tmp_path: Path,
+) -> None:
+    package_root, manifest = _make_qwen3_package(tmp_path)
+
+    assert validate_package(package_root) == manifest
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("package_profile", "project_runner"),
+        ("entrypoint", "bin/rknn_qwen_runner"),
+    ],
+)
+def test_validate_package_rejects_qwen3_cross_profile_identity(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    package_root, manifest = _make_qwen3_package(tmp_path)
+    manifest[field] = value
+    _write_manifest(package_root, manifest)
+
+    with pytest.raises(ArtifactError, match="invalid deployment manifest"):
+        validate_package(package_root)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("package_profile", "vendor_demo"),
+        ("entrypoint", "bin/rknn_qwen3_demo"),
+    ],
+)
+def test_validate_package_rejects_qwen2_cross_profile_identity(
+    tmp_path: Path, field: str, value: str
+) -> None:
+    package_root, manifest = _make_package(tmp_path)
+    manifest[field] = value
+    _write_manifest(package_root, manifest)
+
+    with pytest.raises(ArtifactError, match="invalid deployment manifest"):
+        validate_package(package_root)
 
 
 def test_validate_package_rejects_out_of_range_rfc3339_offsets(
