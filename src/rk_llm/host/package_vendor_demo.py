@@ -547,4 +547,3 @@ def entrypoint() -> None:
 
 if __name__ == "__main__":
     entrypoint()
-

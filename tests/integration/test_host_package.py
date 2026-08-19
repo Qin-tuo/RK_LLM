@@ -74,4 +74,3 @@ def test_module_cli_prints_one_json_summary(
     assert output.err == ""
     assert output.out.count("\n") == 1
     assert json.loads(output.out) == summary
-
