@@ -12,13 +12,20 @@ def _write_fixture(tmp_path: Path, sha256: str | None = None) -> tuple[Path, Pat
     manifest = project / "configs/models/demo.yaml"
     source = workspace / "models/demo/model.bin"
     generated = workspace / "model-zoo/demo/output.rknn"
+    demo = workspace / "model-zoo/install/rknn_Demo/demo"
+    runtime = workspace / "model-zoo/install/rknn_Demo/lib/runtime.so"
     source.parent.mkdir(parents=True)
     generated.parent.mkdir(parents=True)
+    runtime.parent.mkdir(parents=True)
     manifest.parent.mkdir(parents=True)
     source.write_bytes(b"source")
     generated.write_bytes(b"output")
+    demo.write_bytes(b"executable")
+    runtime.write_bytes(b"runtime")
     source_sha = sha256 or hashlib.sha256(b"source").hexdigest()
     generated_sha = hashlib.sha256(b"output").hexdigest()
+    demo_sha = hashlib.sha256(b"executable").hexdigest()
+    runtime_sha = hashlib.sha256(b"runtime").hexdigest()
     manifest.write_text(
         "\n".join(
             [
@@ -29,10 +36,15 @@ def _write_fixture(tmp_path: Path, sha256: str | None = None) -> tuple[Path, Pat
                 "platform: rk1820",
                 "source_root: models/demo",
                 "generated_root: model-zoo/demo",
+                "demo_root: model-zoo/install/rknn_Demo",
+                "demo_name: rknn_Demo",
                 "source_files:",
                 f"  - {{path: model.bin, size: 6, sha256: {source_sha}}}",
                 "generated_files:",
                 f"  - {{path: output.rknn, size: 6, sha256: {generated_sha}}}",
+                "demo_files:",
+                f"  - {{path: demo, size: 10, sha256: {demo_sha}}}",
+                f"  - {{path: lib/runtime.so, size: 7, sha256: {runtime_sha}}}",
                 "",
             ]
         ),
@@ -74,10 +86,20 @@ def test_module_cli_imports_tiny_workspace_and_prints_one_json_summary(
     record = json.loads(result.stdout)
     assert record["model_id"] == "demo"
     assert record["mode"] == "copy"
-    assert record["statuses"] == {"source": "imported", "generated": "imported"}
-    assert len(record["files"]) == 2
+    assert record["statuses"] == {
+        "source": "imported",
+        "generated": "imported",
+        "demo": "imported",
+    }
+    assert len(record["files"]) == 4
     assert (project / "artifacts/source_models/demo/model.bin").read_bytes() == b"source"
     assert (project / "artifacts/work/demo/model/output.rknn").read_bytes() == b"output"
+    assert (
+        project / "artifacts/work/demo/install/rknn_Demo/demo"
+    ).read_bytes() == b"executable"
+    assert (
+        project / "artifacts/work/demo/install/rknn_Demo/lib/runtime.so"
+    ).read_bytes() == b"runtime"
 
 
 def test_module_cli_reports_artifact_errors_on_stderr_with_exit_two(

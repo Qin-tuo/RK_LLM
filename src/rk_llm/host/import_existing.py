@@ -779,38 +779,76 @@ def _populate_category(
         os.close(source_fd)
 
 
+def _categories(
+    model: ModelManifest,
+) -> tuple[tuple[str, tuple[SizedFilePin, ...]], ...]:
+    categories = (
+        ("source", model.source_files),
+        ("generated", model.generated_files),
+    )
+    demo_declared = (
+        model.demo_root is not None,
+        model.demo_name is not None,
+        bool(model.demo_files),
+    )
+    if any(demo_declared) and not all(demo_declared):
+        raise ConfigurationError(
+            "demo_root, demo_name, and nonempty demo_files must be declared together"
+        )
+    if all(demo_declared):
+        return (*categories, ("demo", model.demo_files))
+    return categories
+
+
+def _source_relative_root(model: ModelManifest, category: str) -> Path:
+    if category == "source":
+        return model.source_root
+    if category == "generated":
+        return model.generated_root
+    if category == "demo" and model.demo_root is not None:
+        return model.demo_root
+    raise ConfigurationError(f"unsupported import category: {category}")
+
+
 def _source_root(
     workspace: Path, model: ModelManifest, category: str
 ) -> Path:
-    relative = model.source_root if category == "source" else model.generated_root
-    return workspace / relative
+    return workspace / _source_relative_root(model, category)
 
 
 def _destination(
     project_root: Path,
-    model_id: str,
+    model: ModelManifest,
     category: str,
     path: Path,
 ) -> Path:
     if category == "source":
-        return project_root / "artifacts/source_models" / model_id / path
-    return project_root / "artifacts/work" / model_id / "model" / path
+        return project_root / "artifacts/source_models" / model.model_id / path
+    if category == "generated":
+        return project_root / "artifacts/work" / model.model_id / "model" / path
+    if category == "demo" and model.demo_name is not None:
+        return (
+            project_root
+            / "artifacts/work"
+            / model.model_id
+            / "install"
+            / model.demo_name
+            / path
+        )
+    raise ConfigurationError(f"unsupported import category: {category}")
 
 
 def _destination_root(
-    project_root: Path, model_id: str, category: str
+    project_root: Path, model: ModelManifest, category: str
 ) -> Path:
-    return _destination(project_root, model_id, category, Path())
+    return _destination(project_root, model, category, Path())
 
 
 def _preflight_paths(
     workspace: Path,
     project_root: Path,
     model: ModelManifest,
-    categories: tuple[
-        tuple[str, tuple[SizedFilePin, ...]],
-        tuple[str, tuple[SizedFilePin, ...]],
-    ],
+    categories: tuple[tuple[str, tuple[SizedFilePin, ...]], ...],
 ) -> None:
     resolved_workspace = _resolved_path(
         workspace,
@@ -862,7 +900,7 @@ def _preflight_paths(
             )
 
     destination_roots = [
-        _destination_root(project_root, model.model_id, category)
+        _destination_root(project_root, model, category)
         for category, _ in categories
     ]
     for destination_root in destination_roots:
@@ -891,7 +929,7 @@ def _preflight_paths(
                 )
 
     destination_paths = [
-        _destination(project_root, model.model_id, category, pin.path)
+        _destination(project_root, model, category, pin.path)
         for category, files in categories
         for pin in files
     ]
@@ -1055,14 +1093,22 @@ def import_existing(
             f"{model_id!r}"
         )
 
-    categories = (
-        ("source", model.source_files),
-        ("generated", model.generated_files),
-    )
+    categories = _categories(model)
+    if model.demo_name is not None and (
+        model.demo_name in {".", ".."}
+        or "/" in model.demo_name
+        or "\\" in model.demo_name
+        or "\0" in model.demo_name
+        or Path(model.demo_name).parts != (model.demo_name,)
+    ):
+        raise ConfigurationError(
+            "demo_name must be a nonempty safe single path component: "
+            f"{model.demo_name!r}"
+        )
     _preflight_paths(workspace, project_root, model, categories)
     for category, _ in categories:
         _validate_directory_components(
-            _destination_root(project_root, model.model_id, category),
+            _destination_root(project_root, model, category),
             ConfigurationError,
             "destination path",
         )
@@ -1092,11 +1138,7 @@ def import_existing(
     artifacts_fd: int | None = None
     try:
         for category, _ in categories:
-            relative_root = (
-                model.source_root
-                if category == "source"
-                else model.generated_root
-            )
+            relative_root = _source_relative_root(model, category)
             source_fds[category] = _open_relative_directory(
                 workspace_fd,
                 relative_root,
@@ -1163,7 +1205,7 @@ def import_existing(
             assert_import_roots()
             destination_root = _destination_root(
                 project_root,
-                model.model_id,
+                model,
                 category,
             )
             relative_destination = destination_root.relative_to(
@@ -1229,7 +1271,7 @@ def import_existing(
             for category, _ in categories:
                 destination_root = _destination_root(
                     project_root,
-                    model.model_id,
+                    model,
                     category,
                 )
                 relative_destination = destination_root.relative_to(

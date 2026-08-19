@@ -45,6 +45,25 @@ def _fixture(tmp_path: Path) -> tuple[Path, Path, ModelManifest]:
     return workspace, project, manifest
 
 
+def _fixture_with_demo(tmp_path: Path) -> tuple[Path, Path, ModelManifest]:
+    workspace, project, manifest = _fixture(tmp_path)
+    demo_root = workspace / "model-zoo/install/rknn_Demo"
+    executable = demo_root / "demo"
+    runtime = demo_root / "lib/runtime.so"
+    runtime.parent.mkdir(parents=True)
+    executable.write_bytes(b"executable")
+    runtime.write_bytes(b"runtime")
+    return workspace, project, replace(
+        manifest,
+        demo_root=Path("model-zoo/install/rknn_Demo"),
+        demo_name="rknn_Demo",
+        demo_files=(
+            _pin("demo", b"executable"),
+            _pin("lib/runtime.so", b"runtime"),
+        ),
+    )
+
+
 def _source_hashes(workspace: Path) -> dict[str, str]:
     return {
         path.relative_to(workspace).as_posix(): hashlib.sha256(
@@ -98,6 +117,112 @@ def test_copy_imports_both_categories_and_writes_deterministic_record(
     assert record_path.read_text(encoding="utf-8") == (
         json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     )
+
+
+def test_copy_imports_and_reuses_complete_demo_category(tmp_path: Path) -> None:
+    workspace, project, manifest = _fixture_with_demo(tmp_path)
+    before = _source_hashes(workspace)
+
+    record = import_existing(workspace, project, manifest)
+
+    demo_root = project / "artifacts/work/demo/install/rknn_Demo"
+    executable = demo_root / "demo"
+    runtime = demo_root / "lib/runtime.so"
+    assert executable.read_bytes() == b"executable"
+    assert runtime.read_bytes() == b"runtime"
+    assert executable.stat().st_ino != (
+        workspace / "model-zoo/install/rknn_Demo/demo"
+    ).stat().st_ino
+    assert record["statuses"] == {
+        "source": "imported",
+        "generated": "imported",
+        "demo": "imported",
+    }
+    assert [entry["category"] for entry in record["files"]] == [
+        "source",
+        "generated",
+        "demo",
+        "demo",
+    ]
+    assert _source_hashes(workspace) == before
+
+    original_inodes = (executable.stat().st_ino, runtime.stat().st_ino)
+    reused = import_existing(workspace, project, manifest)
+
+    assert reused["statuses"] == {
+        "source": "reused",
+        "generated": "reused",
+        "demo": "reused",
+    }
+    assert (executable.stat().st_ino, runtime.stat().st_ino) == original_inodes
+
+
+def test_bad_demo_hash_fails_before_any_destination_write(tmp_path: Path) -> None:
+    workspace, project, manifest = _fixture_with_demo(tmp_path)
+    bad_demo = replace(manifest.demo_files[1], sha256="0" * 64)
+    bad_manifest = replace(
+        manifest,
+        demo_files=(manifest.demo_files[0], bad_demo),
+    )
+
+    with pytest.raises(ArtifactError, match="demo source file") as error:
+        import_existing(workspace, project, bad_manifest)
+
+    assert "expected sha256" in str(error.value)
+    assert not (project / "artifacts").exists()
+
+
+def test_unexpected_existing_demo_file_is_rejected_and_preserved(
+    tmp_path: Path,
+) -> None:
+    workspace, project, manifest = _fixture_with_demo(tmp_path)
+    import_existing(workspace, project, manifest)
+    unexpected = (
+        project / "artifacts/work/demo/install/rknn_Demo/unexpected.bin"
+    )
+    unexpected.write_bytes(b"keep")
+
+    with pytest.raises(ArtifactError, match="unexpected.bin"):
+        import_existing(workspace, project, manifest)
+
+    assert unexpected.read_bytes() == b"keep"
+
+
+def test_demo_source_root_symlink_is_rejected_before_any_write(
+    tmp_path: Path,
+) -> None:
+    workspace, project, manifest = _fixture_with_demo(tmp_path)
+    demo_root = workspace / "model-zoo/install/rknn_Demo"
+    external = tmp_path / "external-demo"
+    demo_root.rename(external)
+    demo_root.symlink_to(external, target_is_directory=True)
+
+    with pytest.raises(ArtifactError, match="symlink"):
+        import_existing(workspace, project, manifest)
+
+    assert not (project / "artifacts").exists()
+
+
+def test_demo_destination_symlink_is_rejected_before_hashing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, project, manifest = _fixture_with_demo(tmp_path)
+    destination = project / "artifacts/work/demo/install/rknn_Demo"
+    destination.parent.mkdir(parents=True)
+    external = tmp_path / "external-destination"
+    external.mkdir()
+    destination.symlink_to(external, target_is_directory=True)
+    monkeypatch.setattr(
+        importer,
+        "_sha256",
+        lambda path: pytest.fail(f"hashed before destination preflight: {path}"),
+    )
+
+    with pytest.raises(ConfigurationError, match="symlink"):
+        import_existing(workspace, project, manifest)
+
+    assert destination.is_symlink()
 
 
 def test_rerun_reuses_matching_targets_and_preserves_mismatched_target(
