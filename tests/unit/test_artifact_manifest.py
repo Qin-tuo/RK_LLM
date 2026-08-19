@@ -18,10 +18,63 @@ from rk_llm.artifacts.manifest import (
     validate_package,
 )
 from rk_llm.errors import ArtifactError
+from rk_llm.manifests.loader import load_model_manifest
 
 
 RUNNER = b"rknn-qwen-runner\n"
 MODEL_REVISION = "7ae557604adf67be50417f59c2c2f167def9a775"
+SOURCE_FILES = [
+    {
+        "path": ".gitattributes",
+        "size": 1519,
+        "sha256": "11ad7efa24975ee4b0c3c3a38ed18737f0658a5f75a0a96787b576a78a023361",
+    },
+    {
+        "path": "LICENSE",
+        "size": 11343,
+        "sha256": "832dd9e00a68dd83b3c3fb9f5588dad7dcf337a0db50f7d9483f310cd292e92e",
+    },
+    {
+        "path": "README.md",
+        "size": 4917,
+        "sha256": "b19c806a904db6dc878a0462e70b551f6b7ac78dfbb88c2eb966ca2b9109ae15",
+    },
+    {
+        "path": "config.json",
+        "size": 659,
+        "sha256": "18e18afcaccafade98daf13a54092927904649e1dd4eba8299ab717d5d94ff45",
+    },
+    {
+        "path": "generation_config.json",
+        "size": 242,
+        "sha256": "e558847a8b4402616f1273797b015104dc266fe4b520056fca88823ba8f8ebe6",
+    },
+    {
+        "path": "merges.txt",
+        "size": 1671839,
+        "sha256": "599bab54075088774b1733fde865d5bd747cbcc7a547c5bc12610e874e26f5e3",
+    },
+    {
+        "path": "model.safetensors",
+        "size": 988097824,
+        "sha256": "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe",
+    },
+    {
+        "path": "tokenizer.json",
+        "size": 7031645,
+        "sha256": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+    },
+    {
+        "path": "tokenizer_config.json",
+        "size": 7305,
+        "sha256": "5b5d4f65d0acd3b2d56a35b56d374a36cbc1c8fa5cf3b3febbbfabf22f359583",
+    },
+    {
+        "path": "vocab.json",
+        "size": 2776833,
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+    },
+]
 
 
 def _valid_manifest(file_path: str = "bin/rknn_qwen_runner") -> dict[str, object]:
@@ -33,6 +86,7 @@ def _valid_manifest(file_path: str = "bin/rknn_qwen_runner") -> dict[str, object
             "id": "qwen2_5_0_5b",
             "repository": "Qwen/Qwen2.5-0.5B-Instruct",
             "revision": MODEL_REVISION,
+            "source_files": copy.deepcopy(SOURCE_FILES),
         },
         "toolchain": {
             "project_commit": "a" * 40,
@@ -54,6 +108,7 @@ def _valid_manifest(file_path: str = "bin/rknn_qwen_runner") -> dict[str, object
         "target": {
             "host_soc": "rk3588",
             "accelerator": "rk1828",
+            "compiler_platform": "rk1820",
             "architecture": "aarch64",
             "glibc_max": "2.35",
             "glibcxx_max": "3.4.30",
@@ -72,6 +127,19 @@ def _valid_manifest(file_path: str = "bin/rknn_qwen_runner") -> dict[str, object
             }
         ],
     }
+
+
+def test_package_source_pins_match_model_manifest() -> None:
+    model = load_model_manifest(Path("configs/models/qwen2_5_0_5b.yaml"))
+
+    assert [
+        {
+            "path": pin.path.as_posix(),
+            "size": pin.size,
+            "sha256": pin.sha256,
+        }
+        for pin in model.source_files
+    ] == SOURCE_FILES
 
 
 def _write_manifest(package_root: Path, manifest: dict[str, object]) -> None:
@@ -170,7 +238,9 @@ def test_validate_package_rejects_parent_traversal(tmp_path: Path) -> None:
     package_root, manifest = _make_package(tmp_path)
     file_record = manifest["files"][0]
     assert isinstance(file_record, dict)
-    file_record["path"] = "../outside"
+    unsafe_record = copy.deepcopy(file_record)
+    unsafe_record["path"] = "../outside"
+    manifest["files"].append(unsafe_record)
     _write_manifest(package_root, manifest)
 
     with pytest.raises(ArtifactError, match="safe relative path"):
@@ -393,6 +463,20 @@ def test_validate_package_rejects_duplicate_paths(tmp_path: Path) -> None:
         validate_package(package_root)
 
 
+def test_validate_package_requires_canonical_runner(tmp_path: Path) -> None:
+    package_root, manifest = _make_package(tmp_path)
+    runner = package_root / "bin" / "rknn_qwen_runner"
+    other_runner = package_root / "bin" / "other_runner"
+    runner.replace(other_runner)
+    file_record = manifest["files"][0]
+    assert isinstance(file_record, dict)
+    file_record["path"] = "bin/other_runner"
+    _write_manifest(package_root, manifest)
+
+    with pytest.raises(ArtifactError, match="invalid deployment manifest"):
+        validate_package(package_root)
+
+
 def _set_schema_version(manifest: dict[str, object]) -> None:
     manifest["schema_version"] = 2
 
@@ -411,6 +495,18 @@ def _set_wrong_model_id(manifest: dict[str, object]) -> None:
 
 def _set_wrong_model_repository(manifest: dict[str, object]) -> None:
     manifest["model"]["repository"] = "other/model"
+
+
+def _set_wrong_model_revision(manifest: dict[str, object]) -> None:
+    manifest["model"]["revision"] = "f" * 40
+
+
+def _set_wrong_source_file_hash(manifest: dict[str, object]) -> None:
+    manifest["model"]["source_files"][0]["sha256"] = "f" * 64
+
+
+def _remove_source_files(manifest: dict[str, object]) -> None:
+    del manifest["model"]["source_files"]
 
 
 def _set_wrong_toolkit_release(manifest: dict[str, object]) -> None:
@@ -437,6 +533,18 @@ def _set_wrong_target(manifest: dict[str, object]) -> None:
     manifest["target"]["accelerator"] = "rk9999"
 
 
+def _remove_compiler_platform(manifest: dict[str, object]) -> None:
+    del manifest["target"]["compiler_platform"]
+
+
+def _set_wrong_compiler_platform(manifest: dict[str, object]) -> None:
+    manifest["target"]["compiler_platform"] = "rk1828"
+
+
+def _empty_rknn_args(manifest: dict[str, object]) -> None:
+    manifest["build"]["rknn_args"] = []
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -445,12 +553,18 @@ def _set_wrong_target(manifest: dict[str, object]) -> None:
         _add_top_level_property,
         _set_wrong_model_id,
         _set_wrong_model_repository,
+        _set_wrong_model_revision,
+        _set_wrong_source_file_hash,
+        _remove_source_files,
         _set_wrong_toolkit_release,
         _set_wrong_model_zoo_revision,
         _set_wrong_runtime_version,
         _set_wrong_firmware_version,
         _set_wrong_builder_image,
         _set_wrong_target,
+        _remove_compiler_platform,
+        _set_wrong_compiler_platform,
+        _empty_rknn_args,
     ],
     ids=lambda mutate: mutate.__name__,
 )
