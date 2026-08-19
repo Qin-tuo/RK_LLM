@@ -9,16 +9,15 @@ from pathlib import Path
 
 from rk_llm.backends.base import GenerationBackend
 from rk_llm.backends.mock import MockBackend
-from rk_llm.backends.rkllm import RKLLMBackend
+from rk_llm.backends.rknn3 import RKNN3Backend
 from rk_llm.config import RuntimeConfig, load_benchmark_config, load_runtime_config
-from rk_llm.errors import ConfigurationError, RKLLMProjectError
+from rk_llm.errors import ConfigurationError, ProjectError
 from rk_llm.generation.service import GenerationService
 from rk_llm.metrics.benchmark import run_benchmark
 from rk_llm.types import GenerationRequest
 
 
-_DEFAULT_RUNNER_PATH = Path("native/rkllm_runner/build/rkllm_runner")
-_DEFAULT_MODEL_PATH = Path("artifacts/converted_models/model.rkllm")
+_DEFAULT_PACKAGE_PATH = Path("artifacts/deploy/current")
 
 
 def _target_for_backend(backend: str) -> str:
@@ -42,20 +41,16 @@ def _deployment_path(path: Path) -> Path:
     return expanded_path.resolve()
 
 
-def _runner_path() -> Path:
-    return _deployment_path(_DEFAULT_RUNNER_PATH)
-
-
-def _model_path(model: Path | None = None) -> Path:
-    return _deployment_path(model if model is not None else _DEFAULT_MODEL_PATH)
+def _package_path(package: Path | None = None) -> Path:
+    return _deployment_path(package if package is not None else _DEFAULT_PACKAGE_PATH)
 
 
 def _backend(config: RuntimeConfig) -> GenerationBackend:
     if config.backend == "mock":
         return MockBackend()
-    if config.model_path is None:
-        raise ValueError("model_path is required for rkllm")
-    return RKLLMBackend(_runner_path(), config.model_path)
+    if config.package_path is None:
+        raise ValueError("package_path is required for rknn3")
+    return RKNN3Backend(config.package_path)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -63,16 +58,16 @@ def _parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
 
     doctor = commands.add_parser("doctor")
-    doctor.add_argument("--backend", choices=("mock", "rkllm"), default="mock")
-    doctor.add_argument("--model", type=Path)
+    doctor.add_argument("--backend", choices=("mock", "rknn3"), default="mock")
+    doctor.add_argument("--package", type=Path)
 
     generate = commands.add_parser("generate")
-    generate.add_argument("--backend", choices=("mock", "rkllm"), required=True)
+    generate.add_argument("--backend", choices=("mock", "rknn3"), required=True)
     generate.add_argument("--config", type=Path, required=True)
     generate.add_argument("--prompt", required=True)
 
     benchmark = commands.add_parser("benchmark")
-    benchmark.add_argument("--backend", choices=("mock", "rkllm"), required=True)
+    benchmark.add_argument("--backend", choices=("mock", "rknn3"), required=True)
     benchmark.add_argument("--config", type=Path, required=True)
     benchmark.add_argument("--output", type=Path, required=True)
     return parser
@@ -84,7 +79,7 @@ def main(argv: list[str] | None = None) -> int:
         backend: GenerationBackend = (
             MockBackend()
             if args.backend == "mock"
-            else RKLLMBackend(_runner_path(), _model_path(args.model))
+            else RKNN3Backend(_package_path(args.package))
         )
         capabilities = backend.capabilities()
         print(json.dumps(asdict(capabilities), ensure_ascii=False))
@@ -142,7 +137,7 @@ def entrypoint() -> None:
     except BrokenPipeError:
         _silence_broken_stdout()
         raise SystemExit(141) from None
-    except (ValueError, OSError, RuntimeError, RKLLMProjectError) as error:
+    except (ValueError, OSError, RuntimeError, ProjectError) as error:
         print(str(error), file=sys.stderr)
         raise SystemExit(2) from error
 

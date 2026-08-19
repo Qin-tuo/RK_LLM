@@ -6,16 +6,26 @@ from rk_llm.config import RuntimeConfig, load_benchmark_config, load_runtime_con
 from rk_llm.errors import ConfigurationError
 
 
-def test_load_runtime_config_resolves_model_path(tmp_path: Path) -> None:
+def test_load_runtime_config_resolves_package_path(tmp_path: Path) -> None:
     config_path = tmp_path / "runtime.yaml"
     config_path.write_text(
-        "backend: rkllm\ntarget: rk3588\nmodel_path: models/demo.rkllm\nmax_new_tokens: 64\n",
+        "backend: rknn3\n"
+        "target: rk3588\n"
+        "package_path: ../../artifacts/deploy/current\n"
+        "max_new_tokens: 64\n",
         encoding="utf-8",
     )
     config = load_runtime_config(config_path)
-    assert config.backend == "rkllm"
-    assert config.model_path == tmp_path / "models/demo.rkllm"
+    assert config.backend == "rknn3"
+    assert config.package_path == (tmp_path / "../../artifacts/deploy/current").resolve()
     assert config.max_new_tokens == 64
+
+
+def test_rknn3_runtime_requires_package_path(tmp_path: Path) -> None:
+    config_path = tmp_path / "runtime.yaml"
+    config_path.write_text("backend: rknn3\ntarget: rk3588\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="package_path is required for rknn3"):
+        load_runtime_config(config_path)
 
 
 def test_runtime_config_rejects_unknown_backend(tmp_path: Path) -> None:
@@ -74,8 +84,8 @@ def test_benchmark_iterations_must_be_an_integer(
     [
         ("backend: true\ntarget: host\n", "backend"),
         ("backend: mock\ntarget: []\n", "target"),
-        ("backend: rkllm\ntarget: rk3588\nmodel_path: 12\n", "model_path"),
-        ("backend: mock\ntarget: host\nmodel_path: '   '\n", "model_path"),
+        ("backend: rknn3\ntarget: rk3588\npackage_path: 12\n", "package_path"),
+        ("backend: mock\ntarget: host\npackage_path: '   '\n", "package_path"),
         ("backend: mock\ntarget: host\nmax_new_tokens: true\n", "max_new_tokens"),
         ("backend: mock\ntarget: host\ntop_k: 1.9\n", "top_k"),
         ("backend: mock\ntarget: host\ntemperature: true\n", "temperature"),
@@ -98,7 +108,7 @@ def test_runtime_config_accepts_integer_and_float_sampling_values(tmp_path: Path
     path.write_text(
         "backend: mock\n"
         "target: host\n"
-        "model_path: null\n"
+        "package_path: null\n"
         "max_new_tokens: 64\n"
         "temperature: 1\n"
         "top_p: 0.75\n"
@@ -109,7 +119,7 @@ def test_runtime_config_accepts_integer_and_float_sampling_values(tmp_path: Path
 
     config = load_runtime_config(path)
 
-    assert config.model_path is None
+    assert config.package_path is None
     assert config.temperature == 1.0
     assert config.top_p == 0.75
     assert config.repeat_penalty == 2.0
@@ -122,7 +132,7 @@ def test_runtime_config_accepts_integer_and_float_sampling_values(tmp_path: Path
         ("mock", "s100"),
         ("mock", "arbitrary"),
         ("mock", "rk3588"),
-        ("rkllm", "host"),
+        ("rknn3", "host"),
     ],
 )
 def test_runtime_config_enforces_rk_backend_target_pairs(
@@ -130,7 +140,7 @@ def test_runtime_config_enforces_rk_backend_target_pairs(
 ) -> None:
     path = tmp_path / "runtime.yaml"
     path.write_text(
-        f"backend: {backend}\ntarget: '{target}'\nmodel_path: model.rkllm\n",
+        f"backend: {backend}\ntarget: '{target}'\npackage_path: package\n",
         encoding="utf-8",
     )
 
@@ -145,14 +155,14 @@ def test_runtime_config_enforces_rk_backend_target_pairs(
         ("mock", "s100"),
         ("mock", "arbitrary"),
         ("mock", "rk3588"),
-        ("rkllm", "host"),
+        ("rknn3", "host"),
     ],
 )
 def test_runtime_config_type_enforces_backend_target_pairs(
     backend: str, target: str
 ) -> None:
     with pytest.raises(ValueError, match="target"):
-        RuntimeConfig(backend, target, Path("model.rkllm"), 128, 0.8, 0.9, 1, 1.1)
+        RuntimeConfig(backend, target, Path("package"), 128, 0.8, 0.9, 1, 1.1)
 
 
 def test_benchmark_nested_runtime_enforces_rk_target(tmp_path: Path) -> None:

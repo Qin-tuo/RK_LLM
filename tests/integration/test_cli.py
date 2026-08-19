@@ -1,6 +1,5 @@
 import json
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -41,14 +40,15 @@ class BrokenStdout:
 
 @pytest.fixture(scope="session")
 def rk_llm_executable() -> Path:
-    executable = shutil.which("rk-llm")
-    assert executable is not None, "install the project before running integration tests"
-    return Path(executable).resolve()
+    executable = Path(sys.executable).parent / "rk-llm"
+    assert executable.is_file(), "install the project before running integration tests"
+    assert os.access(executable, os.X_OK), f"console script is not executable: {executable}"
+    return executable
 
 
 def _clean_cli_environment() -> dict[str, str]:
     environment = os.environ.copy()
-    for variable in ("RK_LLM_ROOT", "RK_LLM_RUNNER", "RK_LLM_MODEL"):
+    for variable in ("RK_LLM_ROOT", "RKNN3_PACKAGE"):
         environment.pop(variable, None)
     return environment
 
@@ -62,7 +62,7 @@ def test_doctor_labels_mock_backend(capsys: pytest.CaptureFixture[str]) -> None:
     assert payload["is_mock"] is True
 
 
-def test_doctor_reports_rkllm_unavailable_without_mock_fallback(
+def test_doctor_reports_rknn3_unavailable_without_mock_fallback(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     assert (
@@ -70,19 +70,19 @@ def test_doctor_reports_rkllm_unavailable_without_mock_fallback(
             [
                 "doctor",
                 "--backend",
-                "rkllm",
-                "--model",
-                str(tmp_path / "missing.rkllm"),
+                "rknn3",
+                "--package",
+                str(tmp_path / "missing-package"),
             ]
         )
         == 2
     )
 
     payload = json.loads(capsys.readouterr().out)
-    assert payload["name"] == "rkllm"
+    assert payload["name"] == "rknn3"
     assert payload["available"] is False
     assert payload["is_mock"] is False
-    assert "missing" in payload["reason"]
+    assert "deployment package is missing" in payload["reason"]
 
 
 def test_generate_cli_backend_overrides_config_and_emits_only_text(
@@ -90,9 +90,9 @@ def test_generate_cli_backend_overrides_config_and_emits_only_text(
 ) -> None:
     config = tmp_path / "runtime.yaml"
     config.write_text(
-        "backend: rkllm\n"
+        "backend: rknn3\n"
         "target: rk3588\n"
-        "model_path: missing.rkllm\n"
+        "package_path: missing-package\n"
         "max_new_tokens: 8\n",
         encoding="utf-8",
     )
@@ -115,14 +115,14 @@ def test_generate_cli_backend_overrides_config_and_emits_only_text(
     assert capsys.readouterr().out == "mock: hello\n"
 
 
-def test_generate_rkllm_selection_never_falls_back_to_mock(
+def test_generate_rknn3_selection_never_falls_back_to_mock(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     config = tmp_path / "runtime.yaml"
     config.write_text(
         "backend: mock\n"
         "target: host\n"
-        "model_path: missing.rkllm\n",
+        "package_path: missing-package\n",
         encoding="utf-8",
     )
 
@@ -131,7 +131,7 @@ def test_generate_rkllm_selection_never_falls_back_to_mock(
             [
                 "generate",
                 "--backend",
-                "rkllm",
+                "rknn3",
                 "--config",
                 str(config),
                 "--prompt",
@@ -142,16 +142,16 @@ def test_generate_rkllm_selection_never_falls_back_to_mock(
     assert capsys.readouterr().out == ""
 
 
-def test_generate_rkllm_selection_requires_model_path(tmp_path: Path) -> None:
+def test_generate_rknn3_selection_requires_package_path(tmp_path: Path) -> None:
     config = tmp_path / "runtime.yaml"
     config.write_text("backend: mock\ntarget: host\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="model_path is required for rkllm"):
+    with pytest.raises(ValueError, match="package_path is required for rknn3"):
         main(
             [
                 "generate",
                 "--backend",
-                "rkllm",
+                "rknn3",
                 "--config",
                 str(config),
                 "--prompt",
@@ -221,7 +221,7 @@ def test_benchmark_creates_output_and_reports_record_count(
     config.write_text(
         "iterations: 1\n"
         "prompts: [hello]\n"
-        "runtime: {backend: rkllm, target: rk3588, model_path: missing.rkllm}\n",
+        "runtime: {backend: rknn3, target: rk3588, package_path: missing-package}\n",
         encoding="utf-8",
     )
     output = tmp_path / "result.jsonl"
@@ -254,7 +254,7 @@ def test_entrypoint_converts_project_backend_error_to_exit_two(
 ) -> None:
     config = tmp_path / "runtime.yaml"
     config.write_text(
-        "backend: rkllm\ntarget: rk3588\nmodel_path: missing.rkllm\n",
+        "backend: rknn3\ntarget: rk3588\npackage_path: missing-package\n",
         encoding="utf-8",
     )
     monkeypatch.setattr(
@@ -264,7 +264,7 @@ def test_entrypoint_converts_project_backend_error_to_exit_two(
             "rk-llm",
             "generate",
             "--backend",
-            "rkllm",
+            "rknn3",
             "--config",
             str(config),
             "--prompt",
@@ -276,7 +276,7 @@ def test_entrypoint_converts_project_backend_error_to_exit_two(
         entrypoint()
 
     assert exit_info.value.code == 2
-    assert "native runner is not executable" in capsys.readouterr().err
+    assert "deployment package is missing" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
@@ -345,9 +345,9 @@ def test_installed_doctor_uses_package_root_outside_project_cwd(
             str(rk_llm_executable),
             "doctor",
             "--backend",
-            "rkllm",
-            "--model",
-            "definitely-missing/model.rkllm",
+            "rknn3",
+            "--package",
+            "definitely-missing/package",
         ],
         cwd=tmp_path,
         text=True,
@@ -360,7 +360,7 @@ def test_installed_doctor_uses_package_root_outside_project_cwd(
     capabilities = json.loads(result.stdout)
     assert capabilities["available"] is False
     assert capabilities["is_mock"] is False
-    assert str(package_root / "definitely-missing/model.rkllm") in capabilities[
+    assert str(package_root / "definitely-missing/package") in capabilities[
         "reason"
     ]
     assert str(tmp_path) not in capabilities["reason"]
@@ -377,7 +377,7 @@ def test_installed_doctor_honors_explicit_deployment_root(
     environment["RK_LLM_ROOT"] = str(deployment_root)
 
     result = subprocess.run(
-        [str(rk_llm_executable), "doctor", "--backend", "rkllm"],
+        [str(rk_llm_executable), "doctor", "--backend", "rknn3"],
         cwd=other_cwd,
         text=True,
         capture_output=True,
@@ -387,10 +387,7 @@ def test_installed_doctor_honors_explicit_deployment_root(
 
     assert result.returncode == 2
     capabilities = json.loads(result.stdout)
-    assert str(deployment_root / "native/rkllm_runner/build/rkllm_runner") in capabilities[
-        "reason"
-    ]
-    assert str(deployment_root / "artifacts/converted_models/model.rkllm") in capabilities[
+    assert str(deployment_root / "artifacts/deploy/current") in capabilities[
         "reason"
     ]
     assert str(other_cwd) not in capabilities["reason"]

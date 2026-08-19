@@ -1,38 +1,78 @@
 # RK_LLM
 
-Incremental pure-text LLM deployment skeleton for RK3588. The current milestone is runnable on an x86 development host with a deterministic mock backend. RKLLM native integration and board inference are **not implemented or verified**.
+RK_LLM is the version-controlled foundation for deploying Qwen2.5-0.5B through
+RKNN3 on an RK3588 host connected to an RK1828 accelerator. The repository
+keeps host preparation and board application logic in one Git project while
+leaving large models, vendor repositories, build outputs, and deployment
+packages outside Git.
 
-This project is independent of the S100 VLA project. It currently contains no cross-board collaboration, HTTP service, or ROS 2 integration.
+## Current milestone
 
-## Quick start: x86 mock
+- The deterministic mock CLI and non-hardware tests remain runnable.
+- `manifests/upstream.yaml` and the model manifest pin the verified upstream
+  repositories, Runtime development files, source model, and generated files.
+- `make host-bootstrap` creates verified local vendor inputs under `.vendor/`.
+- `make host-import` adopts the already verified workspace inputs and generated
+  Qwen files into ignored project-local artifact directories without changing
+  their source files.
+- The imported output can be used as evidence for later work, but this project
+  does not yet contain the wrapper that rebuilds it.
+- The RKNN3 backend remains deliberately unavailable until the Native protocol
+  plan implements the project-owned runner contract.
+
+No command in this milestone claims successful hardware inference. The
+[manual deployment evidence](docs/rk1828-rknn3-deployment.md) records completed
+source export, GRQ, RKNN compilation, aarch64 cross-build, and Ubuntu 22.04 ABI
+ceiling checks performed outside project automation. Incremental package
+transfer is still pending. The first RK3588-to-RK1828 board inference has not
+started and is not verified.
+
+## Mock development
 
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python3 -m pip install -r requirements/dev.txt
+python3 -m pip install -e ".[dev]"
 rk-llm doctor --backend mock
 rk-llm generate --backend mock --config configs/runtime/mock.yaml --prompt "hello"
-rk-llm benchmark --backend mock --config configs/benchmark/smoke.yaml --output artifacts/benchmark_runs/mock.jsonl
+python3 -m pytest -m "not hardware"
 ```
 
-Mock generation prints pure text (`mock: hello`) to standard output. Mock results do not represent RK hardware behavior or performance.
+Mock output is deterministic functional test data, not RK3588 or RK1828
+performance evidence.
 
-## Development path
+## Adopt the verified host workspace
 
-1. Keep the x86 mock CLI and non-hardware tests passing.
-2. Convert one pinned source model on a supported host and create a verified artifact manifest.
-3. Replace the explicit native unavailable stub with the external RKLLM Runtime integration.
-4. Pass an opt-in inference smoke test on RK3588.
-5. Collect real, fully described board benchmarks.
+Run these targets from the repository root. Override `WORKSPACE` and
+`RKNN3_RUNTIME_DEV_ROOT` when the external workspace uses different paths.
+
+```sh
+make host-bootstrap
+make host-import
+```
+
+Bootstrap creates complete pinned Toolkit and Model Zoo Git checkouts plus a
+verified Runtime development-file subset beneath `.vendor/`. Import copies the
+pinned source-model files to `artifacts/source_models/` and generated files to
+`artifacts/work/`. Both operations reject identity or checksum mismatches.
+
+The next implementation plan must add reproducible export, cross-build,
+package, and transfer commands. Those targets are intentionally absent today.
+
+## Repository synchronization boundary
+
+GitHub synchronizes tracked source, board logic, configuration, manifests,
+tests, and documentation between the host and board. `.vendor/`, model files,
+build workspaces, deployment packages, deployed payloads, and logs are ignored.
+The host owns download, pinning, verification, build, packaging, and transfer;
+the board owns runtime, benchmark, and application behavior.
 
 ## Documentation
 
-- [RK3588 + RK1828 RKNN3 deployment workflow](docs/rk1828-rknn3-deployment.md)
+- [Architecture and ownership](docs/architecture.md)
+- [Host setup and verified import](docs/host-setup.md)
+- [Board setup and current guard](docs/board-setup.md)
+- [Model inputs and export status](docs/model-export.md)
+- [Benchmark status and evidence rules](docs/benchmark.md)
 - [Implementation roadmap](docs/implementation-roadmap.md)
-- [Architecture and module boundaries](docs/architecture.md)
-- [x86 development and conversion-host setup](docs/host-setup.md)
-- [RK3588 board prerequisites and current limitations](docs/board-setup.md)
-- [Pinned model-export workflow](docs/model-export.md)
-- [Mock and real benchmark conditions](docs/benchmark.md)
-
-Official upstream reference: [airockchip/rknn-llm](https://github.com/airockchip/rknn-llm), with toolkit/runtime version pins recorded in [`third_party/versions.yaml`](third_party/versions.yaml).
+- [Manual RK3588 + RK1828 deployment evidence](docs/rk1828-rknn3-deployment.md)

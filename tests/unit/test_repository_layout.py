@@ -1,70 +1,181 @@
-import re
 from pathlib import Path
 
 
-def test_operational_skeleton_has_required_boundaries() -> None:
+def test_rknn3_foundation_has_required_boundaries() -> None:
     required = (
-        "configs/runtime/mock.yaml",
+        "configs/models/qwen2_5_0_5b.yaml",
         "configs/runtime/rk3588.yaml",
-        "configs/benchmark/smoke.yaml",
-        "third_party/versions.yaml",
-        "native/rkllm_runner/CMakeLists.txt",
-        "native/rkllm_runner/src/main.cpp",
-        "tools/export/README.md",
-        "tools/deploy/README.md",
-        "tools/benchmark/README.md",
+        "manifests/upstream.yaml",
+        "manifests/schemas/deployment-package.schema.json",
+        "native/rknn3_qwen_runner/CMakeLists.txt",
+        "src/rk_llm/backends/rknn3.py",
+        "src/rk_llm/host/bootstrap.py",
+        "src/rk_llm/host/import_existing.py",
+        "tools/host/bootstrap",
+        "tools/host/import-existing",
         "artifacts/README.md",
-        "docs/architecture.md",
-        "docs/host-setup.md",
-        "docs/board-setup.md",
-        "docs/model-export.md",
-        "docs/benchmark.md",
     )
+
     assert [path for path in required if not Path(path).is_file()] == []
 
 
-def test_documented_generation_commands_select_a_backend() -> None:
+def test_project_metadata_and_python_sources_do_not_use_retired_product_name() -> None:
+    sources = (Path("pyproject.toml"), *Path("src/rk_llm").rglob("*.py"))
+    findings = [
+        str(path)
+        for path in sources
+        if "RKLLM" in path.read_text(encoding="utf-8")
+    ]
+
+    assert findings == []
+
+
+def test_rknn3_runner_name_matches_the_deployment_package_contract() -> None:
+    cmake = Path("native/rknn3_qwen_runner/CMakeLists.txt").read_text(
+        encoding="utf-8"
+    )
+    probe = Path("src/rk_llm/platform/probe.py").read_text(encoding="utf-8")
+
+    assert "add_executable(rknn_qwen_runner src/main.cpp)" in cmake
+    assert 'package_path / "bin/rknn_qwen_runner"' in probe
+    assert "add_executable(rknn3_qwen_runner" not in cmake
+
+
+def test_local_vendor_and_artifact_roots_are_ignored() -> None:
+    ignore_patterns = set(
+        Path(".gitignore").read_text(encoding="utf-8").splitlines()
+    )
+    required = {
+        ".vendor/",
+        ".host-venv/",
+        "artifacts/source_models/",
+        "artifacts/work/",
+        "artifacts/packages/",
+        "artifacts/deploy/",
+        "artifacts/logs/",
+    }
+
+    assert required <= ignore_patterns
+
+
+def test_product_docs_do_not_advertise_the_legacy_rkllm_path() -> None:
     documentation = (
         Path("README.md"),
-        Path("Makefile"),
-        *Path("docs").rglob("*.md"),
+        *(
+            path
+            for path in Path("docs").glob("*.md")
+            if path.name != "rk1828-rknn3-deployment.md"
+        ),
         *Path("tools").rglob("*.md"),
     )
-    command_pattern = re.compile(r"rk-llm (?:generate|benchmark)[^&`]*")
-    missing_backend = [
-        f"{path}:{line_number}:{command.group(0).strip()}"
+    stale_tokens = ("DeepSeek-R1", "RKLLM", "--backend rkllm", ".rkllm")
+    findings = [
+        f"{path}:{token}"
         for path in documentation
-        for line_number, line in enumerate(
-            path.read_text(encoding="utf-8").splitlines(), start=1
-        )
-        for command in command_pattern.finditer(line)
-        if "--backend" not in command.group(0)
+        for token in stale_tokens
+        if token in path.read_text(encoding="utf-8")
     ]
-    assert missing_backend == []
+
+    assert findings == []
 
 
-def test_toolkit_install_uses_the_cloned_official_wheel_directory() -> None:
-    requirements = Path("requirements/toolkit.txt").read_text(encoding="utf-8")
-    host_setup = Path("docs/host-setup.md").read_text(encoding="utf-8")
-
-    assert "--no-index" in requirements
-    assert (
-        "--find-links ./third_party/rknn-llm/rkllm-toolkit/packages"
-        in requirements
+def test_manual_evidence_status_is_scoped_to_completed_steps() -> None:
+    readme = " ".join(
+        Path("README.md").read_text(encoding="utf-8").lower().split()
     )
-    assert "rkllm-toolkit==1.3.0" in requirements
-    assert "https://github.com/airockchip/rknn-llm.git" in host_setup
-    assert "--branch release-v1.3.0" in host_setup
-    assert "third_party/rknn-llm" in host_setup
+    required_evidence = (
+        "source export",
+        "grq",
+        "rknn compilation",
+        "aarch64 cross-build",
+        "ubuntu 22.04 abi ceiling",
+        "incremental package transfer",
+        "first rk3588-to-rk1828 board inference",
+        "has not started and is not verified",
+    )
+    product_docs = (
+        Path("README.md"),
+        Path("docs/architecture.md"),
+        Path("docs/board-setup.md"),
+        Path("docs/implementation-roadmap.md"),
+    )
+    overclaims = (
+        "flow already exercised",
+        "already exercised external workflow",
+        "previously exercised external",
+    )
+
+    assert all(term in readme for term in required_evidence)
+    assert [
+        f"{path}:{claim}"
+        for path in product_docs
+        for claim in overclaims
+        if claim in path.read_text(encoding="utf-8").lower()
+    ] == []
 
 
-def test_cloned_upstream_toolkit_repository_is_ignored() -> None:
-    ignore_patterns = Path(".gitignore").read_text(encoding="utf-8").splitlines()
+def test_makefile_exposes_only_implemented_host_foundation_targets() -> None:
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+    required_lines = (
+        "PROJECT_ROOT := $(abspath .)",
+        "HOST_VENV ?= $(PROJECT_ROOT)/.host-venv",
+        "HOST_PYTHON := $(HOST_VENV)/bin/python",
+        "MODEL ?= qwen2_5_0_5b",
+        "WORKSPACE ?= /home/barry/rk1828-work",
+        "RKNN3_RUNTIME_DEV_ROOT ?= $(WORKSPACE)/rknn3-model-zoo/3rdparty/rknpu3",
+        'python3 -m venv "$(HOST_VENV)"',
+        '"$(HOST_PYTHON)" -m pip install -e ".[dev]"',
+        '"$(HOST_PYTHON)" -m rk_llm.host.bootstrap',
+        '--project-root "$(PROJECT_ROOT)"',
+        '--upstream-manifest "$(PROJECT_ROOT)/manifests/upstream.yaml"',
+        '--runtime-dev-root "$(RKNN3_RUNTIME_DEV_ROOT)"',
+        '--seed-workspace "$(WORKSPACE)"',
+        '"$(HOST_PYTHON)" -m rk_llm.host.import_existing',
+        '--workspace "$(WORKSPACE)"',
+        '--model-manifest "$(PROJECT_ROOT)/configs/models/$(MODEL).yaml"',
+        "--mode copy",
+    )
 
-    assert "third_party/rknn-llm/" in ignore_patterns
+    assert all(line in makefile for line in required_lines)
+    assert all(f"{target}:" in makefile for target in ("install", "test", "smoke"))
+    assert ".PHONY:" in makefile
+    assert all(
+        target in makefile
+        for target in ("host-env", "host-bootstrap", "host-import")
+    )
+    assert all(
+        f"{target}:" not in makefile
+        for target in ("host-build", "host-runner", "host-package", "deploy")
+    )
 
 
-def test_documented_toolkit_virtual_environment_is_ignored() -> None:
-    ignore_patterns = Path(".gitignore").read_text(encoding="utf-8").splitlines()
+def test_vendor_requirements_point_to_the_pinned_manifest() -> None:
+    for path in (Path("requirements/toolkit.txt"), Path("requirements/board.txt")):
+        lines = path.read_text(encoding="utf-8").splitlines()
+        active_requirements = [
+            line for line in lines if line.strip() and not line.lstrip().startswith("#")
+        ]
 
-    assert ".toolkit-venv/" in ignore_patterns
+        assert active_requirements == []
+        assert "manifests/upstream.yaml" in "\n".join(lines)
+        assert "bootstrap" in "\n".join(lines).lower()
+
+    board_requirements = Path("requirements/board.txt").read_text(encoding="utf-8")
+    assert "sizes" not in board_requirements
+
+
+def test_host_docs_distinguish_bootstrap_and_import_validation() -> None:
+    host_setup = Path("docs/host-setup.md").read_text(encoding="utf-8")
+    normalized_host_setup = " ".join(host_setup.split())
+
+    assert "additional files are allowed" in normalized_host_setup
+    assert "exact regular-file set" in normalized_host_setup
+    assert (
+        "does not validate the source model Git revision" in normalized_host_setup
+    )
+    assert "Import records the model revision" not in normalized_host_setup
+    assert (
+        "model manifest records its repository and revision"
+        in normalized_host_setup
+    )
+    assert "import record does not include either value" in normalized_host_setup

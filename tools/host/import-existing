@@ -1,0 +1,3 @@
+#!/usr/bin/env sh
+set -eu
+exec "${RK_LLM_PYTHON:-python3}" -m rk_llm.host.import_existing "$@"
