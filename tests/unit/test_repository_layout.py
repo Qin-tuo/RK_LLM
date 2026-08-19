@@ -93,7 +93,7 @@ def test_manual_evidence_status_is_scoped_to_completed_steps() -> None:
         "ubuntu 22.04 abi ceiling",
         "incremental package transfer",
         "first rk3588-to-rk1828 board inference",
-        "has not started and is not verified",
+        "is not verified",
     )
     product_docs = (
         Path("README.md"),
@@ -114,6 +114,58 @@ def test_manual_evidence_status_is_scoped_to_completed_steps() -> None:
         for claim in overclaims
         if claim in path.read_text(encoding="utf-8").lower()
     ] == []
+
+
+def test_qwen3_package_transfer_workflow_uses_project_artifact_boundaries() -> None:
+    paths = (
+        Path("README.md"),
+        Path("artifacts/README.md"),
+        Path("docs/host-setup.md"),
+        Path("docs/board-setup.md"),
+        Path("docs/rk1828-qwen3-4b-quick-deployment.md"),
+    )
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+    required = (
+        "qwen3_4b",
+        "make host-import",
+        "make host-package",
+        "package-validate",
+        "artifacts/work/qwen3_4b/install/rknn_Qwen3_demo",
+        "artifacts/packages/qwen3_4b/<package_id>",
+        "artifacts/deploy/releases/$PACKAGE_ID",
+        "artifacts/deploy/current",
+        "rsync -a --protect-args",
+        "ln -s 'releases/$PACKAGE_ID'",
+        "bin/rknn_qwen3_demo",
+        "model/Qwen3-4B.rknn",
+        "model/Qwen3-4B.weight",
+        "model/Qwen3-4B.tokenizer.gguf",
+        "model/Qwen3-4B.embed.bin",
+        "0xff",
+        "你好，请用三句话介绍你自己。",
+    )
+    stale = (
+        "Those targets are intentionally absent today.",
+        "creates a board package, or transfers it",
+        "will be transferred as an immutable deployment package by a later",
+    )
+
+    assert all(token in combined for token in required)
+    assert all(token not in combined for token in stale)
+
+
+def test_qwen3_quick_deployment_transfers_one_validated_package() -> None:
+    quickstart = Path(
+        "docs/rk1828-qwen3-4b-quick-deployment.md"
+    ).read_text(encoding="utf-8")
+
+    assert 'make host-import MODEL=qwen3_4b' in quickstart
+    assert 'make host-package MODEL=qwen3_4b' in quickstart
+    assert 'REMOTE_INCOMING="$REMOTE_PROJECT/artifacts/deploy/.incoming-$PACKAGE_ID"' in quickstart
+    assert 'REMOTE_RELEASE="$REMOTE_PROJECT/artifacts/deploy/releases/$PACKAGE_ID"' in quickstart
+    assert '"$PACKAGE_DIR/" "$RK3588_HOST:$REMOTE_INCOMING/"' in quickstart
+    assert 'mv \'$REMOTE_INCOMING\' \'$REMOTE_RELEASE\'' in quickstart
+    assert 'scp -r "$DEMO_DIR"' not in quickstart
 
 
 def test_makefile_exposes_implemented_host_targets() -> None:

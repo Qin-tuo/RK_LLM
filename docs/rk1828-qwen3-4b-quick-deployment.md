@@ -354,46 +354,50 @@ docker run --rm \
   '
 ```
 
-## 6. 检查部署包
+## 6. 导入并生成项目部署包
+
+外部的 `$DEMO_DIR` 是本次导入源，不是最终传输目录。回到统一项目，把已固定的源模型、
+生成文件和 Demo 导入项目；导入不会修改外部工作区：
 
 ```bash
-test -s "$DEMO_DIR/rknn_qwen3_demo"
-test -s "$DEMO_DIR/model/Qwen3-4B.rknn"
-test -s "$DEMO_DIR/model/Qwen3-4B.weight"
-test -s "$DEMO_DIR/model/Qwen3-4B.tokenizer.gguf"
-test -s "$DEMO_DIR/model/Qwen3-4B.embed.bin"
+cd /home/barry/AI_Infra/RK_LLM
+make host-import MODEL=qwen3_4b WORKSPACE=/home/barry/rk1828-work
+make host-package MODEL=qwen3_4b
 
-file "$DEMO_DIR/rknn_qwen3_demo"
+IMPORTED_DEMO="$PWD/artifacts/work/qwen3_4b/install/rknn_Qwen3_demo"
+PACKAGE_ROOT="$PWD/artifacts/packages/qwen3_4b"
+PACKAGE_DIR="$(find "$PACKAGE_ROOT" -mindepth 1 -maxdepth 1 -type d -print -quit)"
 
-for ELF_FILE in "$DEMO_DIR/rknn_qwen3_demo" "$DEMO_DIR"/lib/*.so; do
-  printf '%s: ' "$ELF_FILE"
-  aarch64-linux-gnu-readelf --version-info "$ELF_FILE" | \
-    grep -o 'GLIBC_[0-9][0-9.]*' | sort -Vu | paste -sd, -
-
-  if aarch64-linux-gnu-readelf --version-info "$ELF_FILE" | \
-      grep -Eq 'GLIBC_2\.(3[6-9]|[4-9][0-9])|GLIBC_[3-9]\.'; then
-    echo "不兼容 glibc 2.35: $ELF_FILE" >&2
-    exit 1
-  fi
-done
-
-du -sh "$DEMO_DIR"
+test -d "$IMPORTED_DEMO"
+test -n "$PACKAGE_DIR"
+.host-venv/bin/rk-llm package-validate --package "$PACKAGE_DIR"
 ```
 
-主程序必须显示为 ARM64 ELF，且循环检查不得报告高于 glibc 2.35 的依赖。
+导入后的证据目录固定为
+`artifacts/work/qwen3_4b/install/rknn_Qwen3_demo`；最终可传输目录固定为
+`artifacts/packages/qwen3_4b/<package_id>`。打包器只复制 Demo 可运行载荷，并验证
+AArch64、GLIBC 2.35、GLIBCXX 3.4.30、大小和 SHA-256。再次运行两条 `make` 命令时，
+导入应报告三类 `reused`，打包应报告 `reused`。
 
 ## 7. 传输到 RK3588
 
+先确认端侧已通过 Git 同步同一项目，并已按 `docs/board-setup.md` 创建 `.venv`。只传输
+`PACKAGE_DIR` 这一份不可变包，不传 `.vendor/`、外部工作区或整个 `artifacts/work/`：
+
 ```bash
-read -rp "RK3588 IP: " RK3588_IP
-export RK3588_HOST="ubuntu@$RK3588_IP"
-export REMOTE_DIR="/home/ubuntu/userdata/rknn_Qwen3_demo"
+RK3588_HOST=ubuntu@<RK3588_IP>
+REMOTE_PROJECT=/home/ubuntu/RK_LLM
+PACKAGE_ID="$(basename "$PACKAGE_DIR")"
+REMOTE_INCOMING="$REMOTE_PROJECT/artifacts/deploy/.incoming-$PACKAGE_ID"
+REMOTE_RELEASE="$REMOTE_PROJECT/artifacts/deploy/releases/$PACKAGE_ID"
 
-ssh "$RK3588_HOST" 'uname -m; df -h /home/ubuntu/userdata; sudo rknn-smi info -l'
-
-scp -r "$DEMO_DIR" \
-  "$RK3588_HOST:/home/ubuntu/userdata/"
+ssh "$RK3588_HOST" "test ! -e '$REMOTE_INCOMING' && test ! -e '$REMOTE_RELEASE' && mkdir -p '$REMOTE_PROJECT/artifacts/deploy/releases'"
+rsync -a --protect-args "$PACKAGE_DIR/" "$RK3588_HOST:$REMOTE_INCOMING/"
+ssh "$RK3588_HOST" "cd '$REMOTE_PROJECT' && .venv/bin/rk-llm package-validate --package '$REMOTE_INCOMING' && mv '$REMOTE_INCOMING' '$REMOTE_RELEASE' && ln -s 'releases/$PACKAGE_ID' '$REMOTE_PROJECT/artifacts/deploy/.current-$PACKAGE_ID' && mv -Tf '$REMOTE_PROJECT/artifacts/deploy/.current-$PACKAGE_ID' '$REMOTE_PROJECT/artifacts/deploy/current'"
 ```
+
+第二条 SSH 命令只有在端侧清单、文件大小和 SHA-256 全部通过后才发布 release，并通过
+相对 `current` 链接原子切换。已存在的 incoming 或同 ID release 会直接拒绝，避免覆盖。
 
 ## 8. 板端运行
 
@@ -401,12 +405,12 @@ scp -r "$DEMO_DIR" \
 
 ```bash
 ssh "$RK3588_HOST"
-cd /home/ubuntu/userdata/rknn_Qwen3_demo
+cd /home/ubuntu/RK_LLM/artifacts/deploy/current
 export LD_LIBRARY_PATH="$PWD/lib:$LD_LIBRARY_PATH"
 
 sudo rknn-smi info -l
 
-./rknn_qwen3_demo \
+./bin/rknn_qwen3_demo \
   model/Qwen3-4B.rknn \
   model/Qwen3-4B.weight \
   model/Qwen3-4B.tokenizer.gguf \
@@ -427,6 +431,8 @@ sudo rknn-smi info -w
 - 四个 Qwen3-4B 部署文件均存在且非空；
 - `load_rknn return code: 0`；
 - Demo 为 ARM64 ELF，所有部署 ELF 兼容 glibc 2.35；
+- `package-validate` 在宿主机 staging 和端侧 incoming 上均通过；
+- 端侧 `artifacts/deploy/current` 是指向 `releases/$PACKAGE_ID` 的相对链接；
 - 模型加载后能持续输出有意义的 token；
 - `rknn-smi` 显示 RK1828 利用率和显存占用变化；
 - 没有 Runtime、固件、PCIe 或版本不匹配错误。
